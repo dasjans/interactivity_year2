@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>devicemotion - sender</title>
+  <link rel="stylesheet" href="../../demos.css">
+  <script type="importmap">{ "imports": { "@ixfx":"/ixfx/index.js", "@ixfx/": "/ixfx/" } }</script>
+
+</head>
+
+<body>
+  <style>
+    body {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+
+    #lastData,
+    #log {
+      font-family: Menlo, Consolas, Monaco, Liberation Mono, Lucida Console, monospace;
+    }
+
+    #last>table {
+      border: 1px solid var(--spotL);
+    }
+
+    #last td {
+      width: 5rem;
+      padding: 0.5rem;
+    }
+
+    #last.frozen {
+      background-color: lightblue;
+    }
+
+    h2 {
+      margin-top: 1rem;
+      margin-bottom: 0.5rem;
+      text-transform: uppercase;
+      font-size: small;
+    }
+
+    button {
+      padding: 1rem;
+      margin-top: 0.5rem;
+    }
+
+    .paused {
+      border: 2px solid red;
+    }
+
+
+    #lastData,
+    #console {
+      word-break: break-all;
+    }
+
+    #console {
+      margin-top: 1em;
+      max-height: 10em;
+      overflow: scroll;
+      font-size: 0.7em;
+    }
+
+    table {
+      width: 100%;
+    }
+
+    td {
+      width: 30vw;
+    }
+  </style>
+  <section>
+    <h1>sender</h1>
+    <button id="btnStart">Start</button>
+    <div>
+      <label>
+        Id:
+        <input id="txtPeerId">
+      </label>
+    </div>
+    <h2>
+      Last data
+    </h2>
+    <div id="lastData">
+
+    </div>
+
+    <button id="btnPause">
+      Pause
+    </button>
+    <div id="remote-status"></div>
+    <div id="console"></div>
+  </section>
+  <script type="module" src="sender.js"></script>
+</body>
+
+</html>

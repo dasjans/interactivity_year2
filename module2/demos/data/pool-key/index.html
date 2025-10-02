@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>pool-key</title>
+  <script type="importmap">{ "imports": { "@ixfx":"/ixfx/index.js", "@ixfx/": "/ixfx/" } }</script>
+<link rel="stylesheet" href="/base.css">
+</head>
+<style>
+  :root {
+    --hue: 83;
+    --padding-m: 0.5em;
+    --padding-l: 1em;
+  }
+
+  body {
+    font-size: 12px;
+    padding: 0;
+    margin: 0;
+    display: flex;
+  }
+
+  .pool-item {
+    background-color: var(--fg);
+    color: var(--bg);
+    width: 5em;
+    height: 5em;
+    border-radius: 5em;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+  }
+
+  #items {
+    gap: var(--padding-m);
+    display: flex;
+    flex-grow: 1;
+    flex-wrap: wrap;
+    flex-direction: row;
+    height: 100%;
+    width: 100%;
+  }
+
+  section {
+    padding: var(--padding-l);
+  }
+</style>
+
+<body>
+  <section>
+    <h1>pool-key</h1>
+    <p>Type! Please see the README.md</p>
+  </section>
+  <script type="module" src="script.js"></script>
+  <section id="items">
+  </section>
+</body>
+
+</html>
