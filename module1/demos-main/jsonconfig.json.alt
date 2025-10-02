@@ -1,0 +1,75 @@
+{
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "moduleDetection": "force",
+    "target": "ES2023",
+    "jsx": "react",
+    "allowImportingTsExtensions": false,
+    "checkJs": true,
+    "strictNullChecks": true,
+    "strictFunctionTypes": true,
+    "baseUrl": "./",
+    "paths": {
+      "@ixfx/*": [
+        "./_lib/ixfx/*"
+      ],
+      "@ixfxfun/numbers": [
+        "./_lib/numbers/index.js"
+      ],
+      "@ixfxfun/arrays": [
+        "./_lib/arrays/index.js"
+      ],
+      "@ixfxfun/collections": [
+        "./_lib/collections/index.js"
+      ],
+      "@ixfxfun/debug": [
+        "./_lib/debug/index.js"
+      ],
+      "@ixfxfun/dom": [
+        "./_lib/dom/index.js"
+      ],
+      "@ixfxfun/events": [
+        "./_lib/events/index.js"
+      ],
+      "@ixfxfun/flow": [
+        "./_lib/flow/index.js"
+      ],
+      "@ixfxfun/geometry": [
+        "./_lib/geometry/index.js"
+      ],
+      "@ixfxfun/guards": [
+        "./_lib/guards/index.js"
+      ],
+      "@ixfxfun/iterables": [
+        "./_lib/iterables/index.js"
+      ],
+      "@ixfxfun/modulation": [
+        "./_lib/modulation/index.js"
+      ],
+      "@ixfxfun/process": [
+        "./_lib/process/index.js"
+      ],
+      "@ixfxfun/random": [
+        "./_lib/random/index.js"
+      ],
+      "@ixfxfun/rx": [
+        "./_lib/rx/index.js"
+      ],
+      "@ixfxfun/ui": [
+        "./_lib/ui/index.js"
+      ],
+      "@ixfxfun/visual": [
+        "./_lib/visual/index.js"
+      ],
+    },
+    "lib": [
+      "DOM",
+      "ESNext"
+    ]
+  },
+  "exclude": [
+    "node_modules",
+    "**/node_modules/*"
+  ]
+}

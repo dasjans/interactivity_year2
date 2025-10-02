@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>rate tracker</title>
+  <script type="importmap">{ "imports": { "@ixfx":"/ixfx/index.js", "@ixfx/": "/ixfx/" } }</script>
+  <link rel="stylesheet" href="/base.css">
+</head>
+<style>
+  :root {
+    --hue: 180;
+  }
+
+  body {
+    display: flex;
+    height: 100vh;
+    overflow: hidden;
+    align-items: center;
+    margin-left: 2em;
+  }
+
+  button {
+    font-size: 2rem;
+  }
+
+  #rate {
+    padding-top: 1em;
+  }
+</style>
+
+<body>
+  <section>
+    <button id="button">Click me</button>
+    <div id="rate"></div>
+    <script type="module" src="script.js"></script>
+  </section>
+</body>
+
+</html>

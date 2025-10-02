@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>inline-console</title>
+  <script type="importmap">{ "imports": { "@ixfx":"/ixfx/index.js", "@ixfx/": "/ixfx/" } }</script>
+  <script src="./script.js" type="module"></script>
+  <link rel="stylesheet" href="/base.css">
+</head>
+
+<body>
+  <style>
+    body {
+      padding: 1em;
+    }
+
+    section {
+      padding: 1em;
+      margin: 1em;
+      background-color: var(--bg);
+      z-index: 1;
+      position:absolute;
+      max-width: 20em;
+      right: 0;
+      border: var(--fg) 2px solid;
+    }
+
+    #ixfx-log {
+      z-index: 0;
+    }
+  </style>
+  <section>
+    <h1>inline-console</h1>
+    <p>Demonstrates using a logger to catch and display messages usually printed to console.</p>
+    <p>This is useful when running on a mobile device.</p>
+  </section>
+</body>
+
+</html>

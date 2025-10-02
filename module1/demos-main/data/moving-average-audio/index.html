@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>moving-average-audio</title>
+  <script type="importmap">{ "imports": { "@ixfx":"/ixfx/index.js", "@ixfx/": "/ixfx/" } }</script>
+<link rel="stylesheet" href="/base.css">
+</head>
+<style>
+  :root {
+    --hue: 338;
+  }
+
+  html,
+  body {
+    height: 100%;
+    font-size: 14px;
+  }
+
+  body {
+    overscroll-behavior: contain;
+    touch-action: none;
+    overflow: hidden;
+  }
+
+  button {
+    padding: 0.5em;
+  }
+
+  #levels>div {
+    position: absolute;
+    display: inline-block;
+    width: 5em;
+    height: 5em;
+    border-radius: 5em;
+  }
+
+  #rawLevel {
+    background-color: var(--accent);
+  }
+
+  #avgLevel {
+    background-color: var(--accent-darker);
+  }
+
+  .raw {
+    color: var(--accent);
+  }
+
+  .avg {
+    color: var(--accent-darker);
+  }
+
+  section {
+    margin: 2em;
+  }
+</style>
+
+<body>
+  <section>
+    <p>Calculates an average sound level from the microphone.</p>
+    <button id="btnStart">Start audio</button>
+    <div class="raw">
+      Raw level: <div id="lblRawLevel"></div>
+    </div>
+    <div class="avg">
+      Average level: <div id="lblAvgLevel"></div>
+    </div>
+    <div id="levels">
+      <div id="rawLevel"></div>
+      <div id="avgLevel"></div>
+    </div>
+    <script type="module" src="script.js"></script>
+  </section>
+</body>
+
+</html>
