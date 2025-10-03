@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>log</title>
+  <script type="importmap">{ "imports": { "@ixfx":"/ixfx/index.js", "@ixfx/": "/ixfx/" } }</script>
+<link rel="stylesheet" href="/base.css">
+</head>
+
+<body>
+  <style>
+    #container {
+      border: 2px solid whitesmoke;
+      overflow-y: scroll;
+      height: 10em;
+    }
+  </style>
+
+  <p>Adding random messages to the log. By default, new messages added to the top.</p>
+  <!-- Element that we will log to -->
+  <div id="container">
+    <div id="log"></div>
+  </div>
+  <script src="./script.js" type="module"></script>
+</body>
+
+</html>

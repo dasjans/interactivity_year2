@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>point-tracker</title>
+  <script type="importmap">{ "imports": { "@ixfx":"/ixfx/index.js", "@ixfx/": "/ixfx/" } }</script>
+  <link rel="stylesheet" href="/base.css">
+</head>
+
+<body>
+  <style>
+    :root {
+      --hue: 90;
+    }
+
+    html,
+    body {
+      user-select: none;
+      -webkit-user-select: none;
+      overscroll-behavior: none;
+      touch-action: none;
+    }
+
+    body {
+      pointer-events: none;
+    }
+  </style>
+  <section>
+    <h1>point-tracker</h1>
+    <p>Pointer movement while pressing tracks speed.</p>
+    <p>Speed value decays over time.</p>
+    <div id="speed"></div>
+    <script type="module" src="script.js"></script>
+  </section>
+</body>
+
+</html>
