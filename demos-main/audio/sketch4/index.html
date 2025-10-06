@@ -24,38 +24,6 @@
       --bg: hsl(var(--hue), 10%, 80%);
       --fg: hsl(var(--hue), 100%, 30%);
     }
-
-    body {
-      background-color: var(--bg);
-      color: var(--fg);
-      font-family: var(--font);
-      user-select: none;
-      -webkit-user-select: none;
-      overscroll-behavior: none;
-      touch-action: none;
-      height: 100vh;
-      width: 100vw;
-      overflow: hidden;
-    }
-
-    .thing {
-      position: absolute;
-      border: 1em solid black;
-      background-color: black;
-      transform-origin: center;
-      
-    }
-
-    #log {
-      position: absolute;
-    }
-    #things {
-      position: absolute;
-      width:100%;
-      height:100%;
-      top:0px;
-      left: 0px;
-    }
   </style>
   <section id="things"></section>
   <script type="module" src="script.js"></script>
