@@ -1,24 +1,172 @@
 import { interpolate, clamp } from '@ixfx/numbers.js';
-//import * as Tone from 'http://unpkg.com/tone';
 
-// Audio output node setup
-let audioCtx,
-  oscillator,
-  gainNode,
-  filter;
+// Audio context and nodes
+let audioCtx;
 
-export const initAudio = () => {
+// Technique 1: Adaptive Spectral Tilt nodes
+let ambienceSource, ambienceGain;
+let highShelfFilter, lowShelfFilter;
+
+// Technique 2: Layer Crossfader nodes
+let nearSource, farSource;
+let nearGain, farGain;
+let nearLpf, farLpf;
+let nearShelf, farShelf;
+
+// Technique 3: Tremolo nodes
+let tremoloOscillator, tremoloGain;
+
+// Audio buffer for ambience
+let ambienceBuffer;
+
+// User preferences stored in localStorage
+const STORAGE_KEY = 'focus_audio_preferences';
+
+/**
+ * Load user preferences from localStorage
+ */
+function loadUserPreferences() {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (stored) {
+      return JSON.parse(stored);
+    }
+  } catch (e) {
+    console.warn('Could not load user preferences', e);
+  }
+  return {
+    rmsBaseline: 0.1,
+    centroidBaseline: 0.5,
+    preferredTremoloBpm: 76,
+    nearCutoff: 5000,
+    farCutoff: 2000,
+    sessionData: {
+      totalFocusTime: 0,
+      totalSessionTime: 0
+    }
+  };
+}
+
+/**
+ * Save user preferences to localStorage
+ */
+function saveUserPreferences(prefs) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(prefs));
+  } catch (e) {
+    console.warn('Could not save user preferences', e);
+  }
+}
+
+let userPreferences = loadUserPreferences();
+
+export const initAudio = async () => {
   if (audioCtx) return; // Already initialized
+  
   audioCtx = new window.AudioContext();
-  oscillator = audioCtx.createOscillator();
-  oscillator.type = `sawtooth`;
-  gainNode = audioCtx.createGain();
-  filter = audioCtx.createBiquadFilter();
-  filter.type = `lowpass`;
-  filter.frequency.setValueAtTime(5400, audioCtx.currentTime); // Initial cutoff
-  oscillator.connect(filter).connect(gainNode)
-    .connect(audioCtx.destination);
-  oscillator.start();
+  
+  // Load audio file
+  try {
+    const response = await fetch('../rainstorm.mp3');
+    const arrayBuffer = await response.arrayBuffer();
+    ambienceBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+    console.log('Audio file loaded successfully');
+  } catch (e) {
+    console.error('Failed to load audio file:', e);
+    return;
+  }
+  
+  // === Technique 1: Adaptive Spectral Tilt ===
+  ambienceSource = audioCtx.createBufferSource();
+  ambienceSource.buffer = ambienceBuffer;
+  ambienceSource.loop = true;
+  
+  highShelfFilter = audioCtx.createBiquadFilter();
+  highShelfFilter.type = 'highshelf';
+  highShelfFilter.frequency.value = 5000;
+  highShelfFilter.gain.value = 0;
+  
+  lowShelfFilter = audioCtx.createBiquadFilter();
+  lowShelfFilter.type = 'lowshelf';
+  lowShelfFilter.frequency.value = 200;
+  lowShelfFilter.gain.value = 0;
+  
+  ambienceGain = audioCtx.createGain();
+  ambienceGain.gain.value = 0.3;
+  
+  // === Technique 3: Tremolo (LFO modulation) ===
+  tremoloOscillator = audioCtx.createOscillator();
+  tremoloOscillator.type = 'sine';
+  tremoloOscillator.frequency.value = userPreferences.preferredTremoloBpm / 60; // Convert BPM to Hz
+  
+  tremoloGain = audioCtx.createGain();
+  tremoloGain.gain.value = 0.01; // Depth of tremolo (0.6-1.8 dB mapped to 0.007-0.021 amplitude)
+  
+  // === Technique 2: Near/Far Crossfader ===
+  nearSource = audioCtx.createBufferSource();
+  nearSource.buffer = ambienceBuffer;
+  nearSource.loop = true;
+  
+  farSource = audioCtx.createBufferSource();
+  farSource.buffer = ambienceBuffer;
+  farSource.loop = true;
+  
+  nearGain = audioCtx.createGain();
+  nearGain.gain.value = 1.0; // Start with near
+  
+  farGain = audioCtx.createGain();
+  farGain.gain.value = 0.0;
+  
+  nearLpf = audioCtx.createBiquadFilter();
+  nearLpf.type = 'lowpass';
+  nearLpf.frequency.value = userPreferences.nearCutoff;
+  nearLpf.Q.value = 0.707;
+  
+  farLpf = audioCtx.createBiquadFilter();
+  farLpf.type = 'lowpass';
+  farLpf.frequency.value = userPreferences.farCutoff;
+  farLpf.Q.value = 0.707;
+  
+  nearShelf = audioCtx.createBiquadFilter();
+  nearShelf.type = 'highshelf';
+  nearShelf.frequency.value = 4000;
+  nearShelf.gain.value = 0.3;
+  
+  farShelf = audioCtx.createBiquadFilter();
+  farShelf.type = 'highshelf';
+  farShelf.frequency.value = 4000;
+  farShelf.gain.value = -0.5;
+  
+  // Connect tremolo LFO to gain modulation
+  tremoloOscillator.connect(tremoloGain);
+  tremoloGain.connect(ambienceGain.gain);
+  
+  // Connect Technique 1 chain
+  ambienceSource.connect(highShelfFilter)
+    .connect(lowShelfFilter)
+    .connect(ambienceGain);
+  
+  // Connect Technique 2 chains
+  nearSource.connect(nearLpf).connect(nearShelf).connect(nearGain);
+  farSource.connect(farLpf).connect(farShelf).connect(farGain);
+  
+  // Merge both techniques to destination
+  const masterGain = audioCtx.createGain();
+  masterGain.gain.value = 0.7;
+  
+  ambienceGain.connect(masterGain);
+  nearGain.connect(masterGain);
+  farGain.connect(masterGain);
+  
+  masterGain.connect(audioCtx.destination);
+  
+  // Start all sources and oscillators
+  ambienceSource.start();
+  nearSource.start();
+  farSource.start();
+  tremoloOscillator.start();
+  
+  console.log('Adaptive audio system initialized');
 };
 
 export const getAudioCtx = () => audioCtx;
@@ -30,20 +178,84 @@ export const getAudioCtx = () => audioCtx;
  */
 export const useAudio = (thing, ambientState) => {
   if (!audioCtx) {
-    console.log(`Audio context not initialized`);
     return; // Not initialized
   }
-  // Example mapping: agitation -> frequency, loudness -> volume, agitation -> cutoff
-  const { centroid, loudness } = ambientState;
-  const { angle, intensity } = thing;
-  // Frequency: 330Hz to 3300Hz
-  oscillator.frequency.setValueAtTime(330 + centroid * 1000, audioCtx.currentTime);
-  // Volume: 0.5 to 0.8
-  gainNode.gain.setValueAtTime(1 - (loudness[19] * 5), audioCtx.currentTime);
-  // Filter cutoff: 220Hz to 40000Hz
-  //filter.frequency.setValueAtTime(5400 - (intensity * 3780), audioCtx.currentTime);
+  
+  const { rms, centroid, rmsBaseline, centroidBaseline, isEngaged, 
+          isMonotonous, steadyCount, focusLevel } = ambientState;
+  
+  const now = audioCtx.currentTime;
+  const tau = 0.15; // Threshold multiplier
+  
+  // === Technique 1: Adaptive Spectral Tilt ===
+  // High-shelf cut when RMS/centroid above baseline
+  if (rms > rmsBaseline + tau || centroid > centroidBaseline + tau) {
+    // Gentle high-shelf cut (-0.5 to -1.5 dB)
+    const cutAmount = -0.5 - (Math.min((rms - rmsBaseline) / tau, 1.0) * 1.0);
+    highShelfFilter.gain.setTargetAtTime(cutAmount, now, 0.06); // 60ms attack
+  } else {
+    highShelfFilter.gain.setTargetAtTime(0, now, 0.2); // 200ms release
+  }
+  
+  // Low-shelf lift when steady and light for >= 2 seconds (20 samples at 100ms interval)
+  if (steadyCount >= 20 && rms < rmsBaseline + 0.1) {
+    const liftAmount = 0.3 + (Math.min(steadyCount / 50, 1.0) * 0.3);
+    lowShelfFilter.gain.setTargetAtTime(liftAmount, now, 0.06);
+  } else {
+    lowShelfFilter.gain.setTargetAtTime(0, now, 0.2);
+  }
+  
+  // === Technique 2: Layer Crossfader ===
+  if (isEngaged && !isMonotonous) {
+    // Crossfade to Near
+    nearGain.gain.setTargetAtTime(1.0, now, 0.5); // 1.5-3s crossfade
+    farGain.gain.setTargetAtTime(0.0, now, 0.5);
+    nearLpf.frequency.setTargetAtTime(5000, now, 0.5);
+    nearShelf.gain.setTargetAtTime(0.3, now, 0.5);
+  } else {
+    // Crossfade to Far
+    nearGain.gain.setTargetAtTime(0.0, now, 0.5);
+    farGain.gain.setTargetAtTime(0.7, now, 0.5); // Slightly reduced volume
+    farLpf.frequency.setTargetAtTime(2000, now, 0.5);
+    farShelf.gain.setTargetAtTime(-0.5, now, 0.5);
+  }
+  
+  // === Technique 3: Tremolo ===
+  // Adjust tremolo depth based on jitter (using RMS variance as proxy)
+  const jitter = Math.abs(rms - rmsBaseline);
+  
+  if (jitter < 0.1) {
+    // Low jitter: reduce depth (crisper)
+    tremoloGain.gain.setTargetAtTime(0.007, now, 0.1); // ~0.6 dB
+  } else {
+    // High jitter: increase depth (wobbly)
+    tremoloGain.gain.setTargetAtTime(0.018, now, 0.1); // ~1.5 dB
+  }
+  
+  // Update tremolo BPM from state if needed
+  const currentBpm = ambientState.currentTremoloBpm || 76;
+  tremoloOscillator.frequency.setValueAtTime(currentBpm / 60, now);
+  
+  // Personalization: track session metrics
+  updatePersonalization(focusLevel, isEngaged);
 };
 
+/**
+ * Update personalization based on user behavior
+ */
+function updatePersonalization(focusLevel, isEngaged) {
+  // Simple time tracking for personalization
+  userPreferences.sessionData.totalSessionTime += 0.1; // Roughly 100ms intervals
+  
+  if (isEngaged) {
+    userPreferences.sessionData.totalFocusTime += 0.1;
+  }
+  
+  // Save preferences every ~5 seconds
+  if (Math.random() < 0.02) { // 2% chance per call = ~5s at 100ms intervals
+    saveUserPreferences(userPreferences);
+  }
+}
 
 const settings = Object.freeze({
   intensityDropAmount: 0.3,
@@ -64,7 +276,7 @@ const settings = Object.freeze({
  * @param {Thing} thing 
  */
 export const use = (thing) => {
-  //just ignore for now
+  // Visual feedback could be added here
 };
 
 /**
