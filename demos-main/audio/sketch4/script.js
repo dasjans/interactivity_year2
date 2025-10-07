@@ -50,6 +50,7 @@ const settings = Object.freeze({
  *  isEngaged: boolean // Whether user is actively engaged (moderate activity, not idle)
  *  isSteady: boolean // Whether user's activity shows steady, consistent patterns
  *  isMonotonous: boolean // Whether activity is too repetitive/monotonous
+ *  isDrawing: boolean // Whether the activity pattern suggests drawing/sketching
  *  rmsBaseline: number // Learned baseline for user's typical RMS level (adapts over time)
  *  centroidBaseline: number // Learned baseline for user's typical spectral centroid (adapts over time)
  *  steadyCount: number // Counter for consecutive steady samples (resets when not steady)
@@ -71,6 +72,7 @@ let state = Object.freeze({
   isEngaged: false,
   isSteady: false,
   isMonotonous: false,
+  isDrawing: false,
   rmsBaseline: 0.1,
   centroidBaseline: 0.5,
   steadyCount: 0,
@@ -79,7 +81,7 @@ let state = Object.freeze({
 
 
 function use() {
-  const { centroid: agitation, loudness, isEngaged, focusLevel, rms, steadyCount } = state;
+  const { centroid: agitation, loudness, isEngaged, focusLevel, rms, steadyCount, isDrawing } = state;
   // Visually update thing for testing
   Things.use(state.thing);
   // Audio output handling
@@ -92,6 +94,7 @@ function use() {
     const focusText = `Focus: ${(focusLevel * 100).toFixed(0)}%`;
     const rmsText = `Activity: ${(rms * 100).toFixed(0)}%`;
     const steadyText = steadyCount > 0 ? `Steady: ${steadyCount}` : ``;
+    const drawingText = isDrawing ? `✏️ Drawing` : ``;
     
     // Get filter experiment status from Things module
     const filterStatus = Things.getFilterExperimentStatus();
@@ -102,6 +105,7 @@ function use() {
       <div>${focusText}</div>
       <div>${rmsText}</div>
       ${steadyText ? `<div>${steadyText}</div>` : ``}
+      ${drawingText ? `<div style="color: #90ee90;">${drawingText}</div>` : ``}
       ${filterText ? `<div style="color: #ffd700;">${filterText}</div>` : ``}
     `;
   }
@@ -130,6 +134,9 @@ function update() {
 
   // Detect focus based on activity patterns
   const focusMetrics = detectFocus(rmsHistory, centroidHistory, rmsNormalised, spectralCentroidNormalised);
+
+  // Detect if activity is drawing based on loudness pattern (indices 18-20)
+  const isDrawing = detectDrawing(loudnessNormalised);
 
   // Update baselines using Exponential Moving Average (EMA) for slow, gradual adaptation
   // Alpha of 0.05 means each new value has 5% influence, providing smooth long-term learning
@@ -173,6 +180,7 @@ function update() {
     isEngaged,
     isSteady: focusMetrics.isSteady,
     isMonotonous,
+    isDrawing,
     rmsBaseline,
     centroidBaseline,
     steadyCount
@@ -225,6 +233,46 @@ function detectFocus(rmsHistory, centroidHistory, currentRms, currentCentroid) {
   const isEngaged = rmsEngagement && !isMonotonous;
 
   return { focusLevel, isEngaged, isSteady, isMonotonous };
+}
+
+/**
+ * Detect if the activity is likely drawing/sketching based on loudness pattern
+ * Drawing typically creates a bell curve pattern in loudness indices 17-21 with peak at 19
+ * 
+ * @param {Array<number>} loudness - Array of normalized loudness values (0-1) for each frequency band
+ * @returns {boolean} - True if the pattern suggests drawing activity
+ */
+function detectDrawing(loudness) {
+  // Need at least 24 loudness values
+  if (!loudness || loudness.length < 24) return false;
+
+  // Extract the relevant indices (17-21, with focus on 18-20)
+  const idx17 = loudness[17] || 0;
+  const idx18 = loudness[18] || 0;
+  const idx19 = loudness[19] || 0;
+  const idx20 = loudness[20] || 0;
+  const idx21 = loudness[21] || 0;
+
+  // Check if there's sufficient activity in this range
+  const avgActivity = (idx18 + idx19 + idx20) / 3;
+  if (avgActivity < 0.1) return false; // Too quiet to be drawing
+
+  // Check for bell curve pattern: idx19 should be highest or near-highest
+  // Being lenient as other sounds may interfere
+  const isPeakAt19 = idx19 >= idx18 * 0.8 && idx19 >= idx20 * 0.8;
+  
+  // Check that values decrease away from the peak (with tolerance)
+  const slopesDown17to19 = idx19 >= idx17 * 0.7 || idx18 >= idx17 * 0.7;
+  const slopesDown21to19 = idx19 >= idx21 * 0.7 || idx20 >= idx21 * 0.7;
+  
+  // Additional check: ensure it's not a flat line by checking variance
+  const values = [idx17, idx18, idx19, idx20, idx21];
+  const mean = values.reduce((a, b) => a + b, 0) / values.length;
+  const variance = values.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / values.length;
+  const hasVariation = variance > 0.005; // Require some variation to avoid flat patterns
+  
+  // Drawing is likely if we have a peak at 19, slopes down on both sides, and has variation
+  return isPeakAt19 && (slopesDown17to19 || slopesDown21to19) && hasVariation;
 }
 
 /**
