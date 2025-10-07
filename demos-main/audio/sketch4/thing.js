@@ -23,6 +23,9 @@ let farShelf;
 let tremoloOscillator;
 let tremoloGain;
 
+// Technique 4: Experimental frequency filters for personalization
+let experimentalFilters = []; // Array of bandpass filters being tested
+
 // Audio buffer for ambience
 let ambienceBuffer;
 
@@ -50,7 +53,16 @@ function loadUserPreferences() {
     farCutoff: 2000,
     sessionData: {
       totalFocusTime: 0,
-      totalSessionTime: 0
+      totalSessionTime: 0,
+      totalEngagedTime: 0, // Time spent in engaged state
+      totalSteadyTime: 0 // Time spent in steady state
+    },
+    // Filter experimentation data
+    filterExperiments: {
+      tested: [], // Array of tested filter configurations
+      positive: [], // Filters that correlated with better focus
+      negative: [], // Filters that correlated with worse focus
+      currentExperiment: null // Active experiment or null
     }
   };
 }
@@ -222,7 +234,7 @@ export const useAudio = (thing, ambientState) => {
   }
 
   const { rms, centroid, rmsBaseline, centroidBaseline, isEngaged,
-    isMonotonous, steadyCount, focusLevel } = ambientState;
+    isMonotonous, steadyCount, focusLevel, isSteady } = ambientState;
 
   const now = audioCtx.currentTime;
   const tau = 0.15; // Threshold multiplier
@@ -278,18 +290,38 @@ export const useAudio = (thing, ambientState) => {
   tremoloOscillator.frequency.setValueAtTime(currentBpm / 60, now);
 
   // Personalization: track session metrics
-  updatePersonalization(focusLevel, isEngaged);
+  updatePersonalization(focusLevel, isEngaged, isSteady);
+  
+  // Manage filter experimentation (called periodically, has internal logic)
+  if (Math.random() < 0.01) { // 1% chance per call = check every ~10 seconds
+    manageFilterExperiments();
+  }
 };
 
 /**
  * Update personalization based on user behavior
  */
-function updatePersonalization(focusLevel, isEngaged) {
-  // Simple time tracking for personalization
+function updatePersonalization(focusLevel, isEngaged, isSteady) {
+  // Comprehensive time tracking for better personalization
   userPreferences.sessionData.totalSessionTime += 0.1; // Roughly 100ms intervals
 
   if (isEngaged) {
-    userPreferences.sessionData.totalFocusTime += 0.1;
+    userPreferences.sessionData.totalEngagedTime += 0.1;
+  }
+
+  if (isSteady) {
+    userPreferences.sessionData.totalSteadyTime += 0.1;
+  }
+
+  // Update current experiment if active
+  if (userPreferences.filterExperiments.currentExperiment) {
+    const experiment = userPreferences.filterExperiments.currentExperiment;
+    experiment.duration += 0.1;
+    experiment.focusTimeAccumulator += focusLevel * 0.1; // Weight by focus level
+    
+    if (isEngaged) {
+      experiment.engagedTime += 0.1;
+    }
   }
 
   // Save preferences every ~5 seconds
@@ -297,6 +329,190 @@ function updatePersonalization(focusLevel, isEngaged) {
     saveUserPreferences(userPreferences);
   }
 }
+
+/**
+ * Candidate filter configurations to test
+ * Each filter removes a narrow frequency band to see if it helps or hurts focus
+ */
+const filterCandidates = [
+  { min: 1000, max: 1050, name: '1kHz-1.05kHz' },
+  { min: 300, max: 310, name: '300-310Hz' },
+  { min: 450, max: 465, name: '450-465Hz' },
+  { min: 2000, max: 2100, name: '2kHz-2.1kHz' },
+  { min: 750, max: 780, name: '750-780Hz' },
+  { min: 3500, max: 3600, name: '3.5kHz-3.6kHz' },
+  { min: 150, max: 165, name: '150-165Hz' },
+  { min: 5000, max: 5200, name: '5kHz-5.2kHz' }
+];
+
+/**
+ * Apply experimental filters to the audio chain
+ * @param {Array<Object>} filterConfigs - Array of {min, max, name} filter configurations
+ */
+function applyExperimentalFilters(filterConfigs) {
+  if (!audioCtx || !ambienceGain) return;
+
+  // Remove existing experimental filters
+  removeExperimentalFilters();
+
+  // Create new filters
+  for (const config of filterConfigs) {
+    const notchFilter = audioCtx.createBiquadFilter();
+    notchFilter.type = 'notch';
+    notchFilter.frequency.value = (config.min + config.max) / 2; // Center frequency
+    notchFilter.Q.value = ((config.min + config.max) / 2) / (config.max - config.min); // Q based on bandwidth
+    
+    experimentalFilters.push({
+      filter: notchFilter,
+      config: config
+    });
+  }
+
+  // Reconnect the audio chain with experimental filters
+  if (experimentalFilters.length > 0) {
+    // Disconnect existing connection
+    ambienceSource.disconnect();
+    
+    // Rebuild chain: source -> experimental filters -> high shelf -> low shelf -> gain
+    let currentNode = ambienceSource;
+    
+    for (const { filter } of experimentalFilters) {
+      currentNode.connect(filter);
+      currentNode = filter;
+    }
+    
+    currentNode.connect(highShelfFilter);
+    
+    console.log(`Applied ${experimentalFilters.length} experimental filter(s):`, filterConfigs.map(f => f.name).join(', '));
+  }
+}
+
+/**
+ * Remove all experimental filters and restore default audio chain
+ */
+function removeExperimentalFilters() {
+  if (experimentalFilters.length > 0) {
+    // Disconnect experimental filters
+    for (const { filter } of experimentalFilters) {
+      filter.disconnect();
+    }
+    experimentalFilters = [];
+    
+    // Restore original connection
+    if (ambienceSource && highShelfFilter) {
+      ambienceSource.disconnect();
+      ambienceSource.connect(highShelfFilter);
+    }
+    
+    console.log(`Removed experimental filters`);
+  }
+}
+
+/**
+ * Start a new filter experiment
+ * Tests a random untested filter configuration or retests if all have been tried
+ */
+function startFilterExperiment() {
+  if (!audioCtx) return;
+
+  // Find untested filters
+  const tested = userPreferences.filterExperiments.tested.map(t => t.name);
+  const untested = filterCandidates.filter(f => !tested.includes(f.name));
+  
+  // If all tested, clear and start over (retesting with new data)
+  const filterToTest = untested.length > 0 
+    ? untested[Math.floor(Math.random() * untested.length)]
+    : filterCandidates[Math.floor(Math.random() * filterCandidates.length)];
+
+  // Can test multiple filters at once (1-2 filters)
+  const numFilters = Math.random() < 0.7 ? 1 : 2; // 70% chance of single filter
+  const filtersToTest = [filterToTest];
+  
+  if (numFilters === 2) {
+    const otherFilters = filterCandidates.filter(f => f.name !== filterToTest.name);
+    if (otherFilters.length > 0) {
+      filtersToTest.push(otherFilters[Math.floor(Math.random() * otherFilters.length)]);
+    }
+  }
+
+  userPreferences.filterExperiments.currentExperiment = {
+    filters: filtersToTest,
+    startTime: Date.now(),
+    duration: 0,
+    focusTimeAccumulator: 0,
+    engagedTime: 0
+  };
+
+  applyExperimentalFilters(filtersToTest);
+  console.log(`Started filter experiment:`, filtersToTest.map(f => f.name).join(' + '));
+}
+
+/**
+ * End current filter experiment and evaluate results
+ */
+function endFilterExperiment() {
+  const experiment = userPreferences.filterExperiments.currentExperiment;
+  if (!experiment || experiment.duration < 5) return; // Need at least 5 seconds of data
+
+  // Calculate metrics
+  const avgFocusLevel = experiment.focusTimeAccumulator / experiment.duration;
+  const engagementRatio = experiment.engagedTime / experiment.duration;
+  
+  // Determine if this filter helped or hurt
+  // Threshold: avg focus > 0.6 and engagement > 0.5 = positive
+  const isPositive = avgFocusLevel > 0.6 && engagementRatio > 0.5;
+  
+  const result = {
+    filters: experiment.filters,
+    avgFocusLevel,
+    engagementRatio,
+    duration: experiment.duration,
+    timestamp: experiment.startTime
+  };
+
+  // Store result
+  for (const filter of experiment.filters) {
+    if (!userPreferences.filterExperiments.tested.find(t => t.name === filter.name)) {
+      userPreferences.filterExperiments.tested.push(filter);
+    }
+  }
+
+  if (isPositive) {
+    userPreferences.filterExperiments.positive.push(result);
+    console.log(`✓ Filter experiment positive:`, result.filters.map(f => f.name).join(' + '), `(focus: ${avgFocusLevel.toFixed(2)}, engagement: ${engagementRatio.toFixed(2)})`);
+  } else {
+    userPreferences.filterExperiments.negative.push(result);
+    console.log(`✗ Filter experiment negative:`, result.filters.map(f => f.name).join(' + '), `(focus: ${avgFocusLevel.toFixed(2)}, engagement: ${engagementRatio.toFixed(2)})`);
+  }
+
+  // Clean up
+  removeExperimentalFilters();
+  userPreferences.filterExperiments.currentExperiment = null;
+  saveUserPreferences(userPreferences);
+}
+
+/**
+ * Manage filter experimentation cycle
+ * Called periodically to start/stop experiments
+ */
+function manageFilterExperiments() {
+  const { currentExperiment } = userPreferences.filterExperiments;
+
+  if (currentExperiment) {
+    // Check if experiment should end (20-30 seconds duration)
+    const experimentDuration = (Date.now() - currentExperiment.startTime) / 1000;
+    if (experimentDuration > 20 + Math.random() * 10) { // 20-30 seconds
+      endFilterExperiment();
+    }
+  } else {
+    // Maybe start new experiment (20% chance when called)
+    if (Math.random() < 0.2) {
+      startFilterExperiment();
+    }
+  }
+}
+
+export { manageFilterExperiments };
 
 const settings = Object.freeze({
   intensityDropAmount: 0.3,

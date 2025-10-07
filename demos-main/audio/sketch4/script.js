@@ -21,10 +21,10 @@ const settings = Object.freeze({
   sketchUseSpeedMs: 10,
 
   // Focus detection parameters
-  focusWindowSize: 20, // Number of samples to analyze for focus
-  steadyThreshold: 0.15, // Threshold for "steady" behavior
-  idleTimeoutMs: 8000, // Time to consider user idle (8s)
-  monotonyWindowMs: 25000, // Window for monotony detection (25s)
+  focusWindowSize: 20, // Number of recent audio samples to keep in history buffers for variance analysis
+  steadyThreshold: 0.2, // Maximum variance allowed to consider behavior "steady" (higher = more lenient, easier to be focused)
+  idleTimeoutMs: 8000, // Milliseconds of inactivity before user is considered idle (8s)
+  monotonyWindowMs: 25000, // Time window for detecting monotonous behavior (25s)
 
   // Adaptive audio parameters
   tiltAttackMs: 60,
@@ -39,20 +39,21 @@ const settings = Object.freeze({
  * @typedef {Readonly<{
  *  lastData?: Meyda.MeydaAudioFeature
  *  thing: Things.Thing
- *  centroid: number
- *  loudness: Array<number>
- *  rms: number
- *  zcr: number
- *  rmsHistory: Array<number>
- *  centroidHistory: Array<number>
- *  lastActivityTime: number
- *  focusLevel: number
- *  isEngaged: boolean
- *  isMonotonous: boolean
- *  rmsBaseline: number
- *  centroidBaseline: number
- *  steadyCount: number
- *  currentTremoloBpm: number
+ *  centroid: number // Current spectral centroid (brightness of sound, 0-1 normalized)
+ *  loudness: Array<number> // Array of loudness values across frequency bands
+ *  rms: number // Current Root Mean Square energy level (overall activity, 0-1 normalized)
+ *  zcr: number // Zero Crossing Rate (rate of signal changes)
+ *  rmsHistory: Array<number> // Rolling buffer of recent RMS values for variance calculation
+ *  centroidHistory: Array<number> // Rolling buffer of recent centroid values for variance calculation
+ *  lastActivityTime: number // Timestamp of last detected meaningful sound activity
+ *  focusLevel: number // Computed focus score (0-1, where higher = more focused)
+ *  isEngaged: boolean // Whether user is actively engaged (moderate activity, not idle)
+ *  isSteady: boolean // Whether user's activity shows steady, consistent patterns
+ *  isMonotonous: boolean // Whether activity is too repetitive/monotonous
+ *  rmsBaseline: number // Learned baseline for user's typical RMS level (adapts over time)
+ *  centroidBaseline: number // Learned baseline for user's typical spectral centroid (adapts over time)
+ *  steadyCount: number // Counter for consecutive steady samples (resets when not steady)
+ *  currentTremoloBpm: number // Current tremolo beats per minute
  * }>} State
  */
 
@@ -68,6 +69,7 @@ let state = Object.freeze({
   lastActivityTime: Date.now(),
   focusLevel: 0.5,
   isEngaged: false,
+  isSteady: false,
   isMonotonous: false,
   rmsBaseline: 0.1,
   centroidBaseline: 0.5,
@@ -116,14 +118,15 @@ function update() {
   if (!Number.isNaN(lastData.rms)) rmsNormalised = rmsNormalise(lastData.rms);
   let zcrValue = lastData.zcr ?? 0;
 
-  // Update history buffers
+  // Update history buffers (keep only the most recent samples up to focusWindowSize)
   let rmsHistory = [ ...state.rmsHistory, rmsNormalised ].slice(-focusWindowSize);
   let centroidHistory = [ ...state.centroidHistory, spectralCentroidNormalised ].slice(-focusWindowSize);
 
   // Detect focus based on activity patterns
   const focusMetrics = detectFocus(rmsHistory, centroidHistory, rmsNormalised, spectralCentroidNormalised);
 
-  // Update baselines with EMA (alpha = 0.05 for slow adaptation)
+  // Update baselines using Exponential Moving Average (EMA) for slow, gradual adaptation
+  // Alpha of 0.05 means each new value has 5% influence, providing smooth long-term learning
   const emaAlpha = 0.05;
   let rmsBaseline = state.rmsBaseline * (1 - emaAlpha) + rmsNormalised * emaAlpha;
   let centroidBaseline = state.centroidBaseline * (1 - emaAlpha) + spectralCentroidNormalised * emaAlpha;
@@ -162,6 +165,7 @@ function update() {
     lastActivityTime,
     focusLevel: focusMetrics.focusLevel,
     isEngaged,
+    isSteady: focusMetrics.isSteady,
     isMonotonous,
     rmsBaseline,
     centroidBaseline,
@@ -171,10 +175,13 @@ function update() {
 
 /**
  * Detect focus based on audio feature patterns
- * @param {Array<number>} rmsHistory 
- * @param {Array<number>} centroidHistory 
- * @param {number} currentRms 
- * @param {number} currentCentroid 
+ * This function analyzes the variance (stability) of RMS and spectral centroid over time
+ * to determine if the user is in a focused state
+ * 
+ * @param {Array<number>} rmsHistory - Recent history of RMS values (activity level)
+ * @param {Array<number>} centroidHistory - Recent history of spectral centroid values (sound brightness)
+ * @param {number} currentRms - Current RMS value (0-1 normalized)
+ * @param {number} currentCentroid - Current spectral centroid value (0-1 normalized)
  * @returns {{focusLevel: number, isEngaged: boolean, isSteady: boolean, isMonotonous: boolean}}
  */
 function detectFocus(rmsHistory, centroidHistory, currentRms, currentCentroid) {
@@ -184,23 +191,31 @@ function detectFocus(rmsHistory, centroidHistory, currentRms, currentCentroid) {
     return { focusLevel: 0.5, isEngaged: false, isSteady: false, isMonotonous: false };
   }
 
-  // Calculate variance for RMS and centroid
+  // Calculate variance (measure of how much the values fluctuate)
+  // Low variance = consistent, steady behavior (potentially focused)
+  // High variance = erratic, changing behavior (potentially distracted)
   const rmsVariance = calculateVariance(rmsHistory);
   const centroidVariance = calculateVariance(centroidHistory);
 
-  // Low variance in both = focused, steady activity
-  // High variance = erratic, unfocused
+  // Low variance in both RMS and centroid indicates focused, steady activity
+  // (e.g., consistent drawing strokes, typing rhythm)
+  // High variance suggests erratic, unfocused behavior
   const isSteady = rmsVariance < steadyThreshold && centroidVariance < steadyThreshold;
 
-  // Engagement: moderate RMS (not silent, not too loud)
-  const rmsEngagement = currentRms > 0.1 && currentRms < 0.8;
+  // Engagement check: user should have moderate RMS (not silent, not excessively loud)
+  // Lowered the minimum threshold to be more lenient about detecting engagement
+  const rmsEngagement = currentRms > 0.05 && currentRms < 0.85;
 
-  // Monotony: very low variance over extended period
+  // Monotony: very low variance over extended period (might indicate boredom or mechanical repetition)
   const isMonotonous = rmsVariance < 0.05 && centroidVariance < 0.05;
 
-  // Focus level: combination of steadiness and appropriate activity level
+  // Calculate focus level as a score from 0 to 1
+  // Highest score (0.8) when steady AND engaged
+  // Medium score (0.6) when engaged but not steady
+  // Low score (0.3) otherwise
   const focusLevel = isSteady && rmsEngagement ? 0.8 : rmsEngagement ? 0.6 : 0.3;
 
+  // User is considered engaged if they have appropriate activity and it's not monotonous
   const isEngaged = rmsEngagement && !isMonotonous;
 
   return { focusLevel, isEngaged, isSteady, isMonotonous };
