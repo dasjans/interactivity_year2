@@ -245,15 +245,17 @@ function setup() {
   }, settings.sketchUseSpeedMs).start();
 
   // Resume audio context on user gesture
-  window.addEventListener(`click`, () => {
+  window.addEventListener(`click`, async () => {
     console.log(`Event click. Resuming audio context if needed.`);
 
-    Things.initAudio();
+    await Things.initAudio();
     const ctx = Things.getAudioCtx();
-
-    ctx.resume().then(() => {
-      console.log(`AudioContext state after resume:`, ctx.state);
-    });
+    
+    if (ctx) {
+      ctx.resume().then(() => {
+        console.log(`AudioContext state after resume:`, ctx.state);
+      });
+    }
   }, { once: true });
 }
 
