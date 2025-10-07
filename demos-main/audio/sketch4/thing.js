@@ -40,7 +40,23 @@ function loadUserPreferences() {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored) {
       console.log(`Loaded user preferences`, stored);
-      return JSON.parse(stored);
+      const loaded = JSON.parse(stored);
+      
+      // Ensure backward compatibility and new fields exist
+      if (!loaded.sessionData) loaded.sessionData = {};
+      if (!loaded.sessionData.totalEngagedTime) loaded.sessionData.totalEngagedTime = loaded.sessionData.totalFocusTime || 0;
+      if (!loaded.sessionData.totalSteadyTime) loaded.sessionData.totalSteadyTime = 0;
+      if (!loaded.sessionData.totalSessionTime) loaded.sessionData.totalSessionTime = 0;
+      if (!loaded.filterExperiments) {
+        loaded.filterExperiments = {
+          tested: [],
+          positive: [],
+          negative: [],
+          currentExperiment: null
+        };
+      }
+      
+      return loaded;
     }
   } catch (e) {
     console.warn(`Could not load user preferences`, e);
@@ -84,6 +100,18 @@ export function resetUserPreferences() {
   localStorage.removeItem(STORAGE_KEY);
   userPreferences = loadUserPreferences();
   console.log(`User preferences reset`);
+  
+  // Log summary if there were experiments
+  const { positive, negative, tested } = userPreferences.filterExperiments;
+  if (tested.length > 0) {
+    console.log(`Filter Experiment Summary (before reset):`);
+    console.log(`  Total tested: ${tested.length}`);
+    console.log(`  Positive results: ${positive.length}`);
+    console.log(`  Negative results: ${negative.length}`);
+    if (positive.length > 0) {
+      console.log(`  Best filters:`, positive.map(p => `${p.filters.map(f => f.name).join('+')} (focus: ${p.avgFocusLevel.toFixed(2)})`).join(', '));
+    }
+  }
 }
 
 export const initAudio = async () => {
@@ -510,6 +538,19 @@ function manageFilterExperiments() {
       startFilterExperiment();
     }
   }
+}
+
+/**
+ * Get current filter experiment status for UI display
+ * @returns {string|null} - Description of active experiment or null
+ */
+export function getFilterExperimentStatus() {
+  const { currentExperiment } = userPreferences.filterExperiments;
+  if (!currentExperiment) return null;
+  
+  const filterNames = currentExperiment.filters.map(f => f.name).join(' + ');
+  const duration = Math.floor((Date.now() - currentExperiment.startTime) / 1000);
+  return `${filterNames} (${duration}s)`;
 }
 
 export { manageFilterExperiments };

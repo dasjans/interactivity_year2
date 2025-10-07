@@ -92,11 +92,17 @@ function use() {
     const focusText = `Focus: ${(focusLevel * 100).toFixed(0)}%`;
     const rmsText = `Activity: ${(rms * 100).toFixed(0)}%`;
     const steadyText = steadyCount > 0 ? `Steady: ${steadyCount}` : ``;
+    
+    // Get filter experiment status from Things module
+    const filterStatus = Things.getFilterExperimentStatus();
+    const filterText = filterStatus ? `🔬 Testing: ${filterStatus}` : ``;
+    
     statusEl.innerHTML = `
       <div>${engagementText}</div>
       <div>${focusText}</div>
       <div>${rmsText}</div>
       ${steadyText ? `<div>${steadyText}</div>` : ``}
+      ${filterText ? `<div style="color: #ffd700;">${filterText}</div>` : ``}
     `;
   }
 }
