@@ -25,14 +25,14 @@ const settings = Object.freeze({
   steadyThreshold: 0.15, // Threshold for "steady" behavior
   idleTimeoutMs: 8000, // Time to consider user idle (8s)
   monotonyWindowMs: 25000, // Window for monotony detection (25s)
-  
+
   // Adaptive audio parameters
   tiltAttackMs: 60,
   tiltReleaseMs: 200,
   crossfadeTimeMs: 2000,
-  
+
   // Tremolo BPM options
-  tremoloBpmOptions: [72, 76, 80, 84],
+  tremoloBpmOptions: [ 72, 76, 80, 84 ],
 });
 
 /** 
@@ -82,19 +82,19 @@ function use() {
   Things.use(state.thing);
   // Audio output handling
   Things.useAudio(state.thing, state);
-  
+
   // Update status display
-  const statusEl = document.getElementById('status');
+  const statusEl = document.getElementById(`status`);
   if (statusEl) {
-    const engagementText = isEngaged ? '✓ Engaged' : '○ Not Engaged';
+    const engagementText = isEngaged ? `✓ Engaged` : `○ Not Engaged`;
     const focusText = `Focus: ${(focusLevel * 100).toFixed(0)}%`;
     const rmsText = `Activity: ${(rms * 100).toFixed(0)}%`;
-    const steadyText = steadyCount > 0 ? `Steady: ${steadyCount}` : '';
+    const steadyText = steadyCount > 0 ? `Steady: ${steadyCount}` : ``;
     statusEl.innerHTML = `
       <div>${engagementText}</div>
       <div>${focusText}</div>
       <div>${rmsText}</div>
-      ${steadyText ? `<div>${steadyText}</div>` : ''}
+      ${steadyText ? `<div>${steadyText}</div>` : ``}
     `;
   }
 }
@@ -110,39 +110,39 @@ function update() {
   let loudnessNormalised = Array.from({ length: 24 }, (_, i) => loudnessNormalise(lastData.loudness.specific.at(i) ?? 0));
   let spectralCentroidNormalised = 0;
   if (!Number.isNaN(lastData.spectralCentroid)) spectralCentroidNormalised = spectralCentroidNormalise(lastData.spectralCentroid);
-  
+
   // Normalize RMS and ZCR
   let rmsNormalised = 0;
   if (!Number.isNaN(lastData.rms)) rmsNormalised = rmsNormalise(lastData.rms);
   let zcrValue = lastData.zcr ?? 0;
-  
+
   // Update history buffers
-  let rmsHistory = [...state.rmsHistory, rmsNormalised].slice(-focusWindowSize);
-  let centroidHistory = [...state.centroidHistory, spectralCentroidNormalised].slice(-focusWindowSize);
-  
+  let rmsHistory = [ ...state.rmsHistory, rmsNormalised ].slice(-focusWindowSize);
+  let centroidHistory = [ ...state.centroidHistory, spectralCentroidNormalised ].slice(-focusWindowSize);
+
   // Detect focus based on activity patterns
   const focusMetrics = detectFocus(rmsHistory, centroidHistory, rmsNormalised, spectralCentroidNormalised);
-  
+
   // Update baselines with EMA (alpha = 0.05 for slow adaptation)
   const emaAlpha = 0.05;
   let rmsBaseline = state.rmsBaseline * (1 - emaAlpha) + rmsNormalised * emaAlpha;
   let centroidBaseline = state.centroidBaseline * (1 - emaAlpha) + spectralCentroidNormalised * emaAlpha;
-  
+
   // Detect idle state
   const now = Date.now();
   const timeSinceActivity = now - state.lastActivityTime;
   const isIdle = timeSinceActivity > settings.idleTimeoutMs;
-  
+
   // Update last activity time if there's meaningful sound
   let lastActivityTime = state.lastActivityTime;
   if (rmsNormalised > rmsBaseline * 0.5) {
     lastActivityTime = now;
   }
-  
+
   // Detect engagement and monotony
   const isEngaged = focusMetrics.isEngaged && !isIdle;
   const isMonotonous = focusMetrics.isMonotonous;
-  
+
   // Track steady behavior count
   let steadyCount = state.steadyCount;
   if (focusMetrics.isSteady) {
@@ -152,8 +152,8 @@ function update() {
   }
 
   // 2. Call saveState to save properties
-  saveState({ 
-    centroid: spectralCentroidNormalised, 
+  saveState({
+    centroid: spectralCentroidNormalised,
     loudness: loudnessNormalised,
     rms: rmsNormalised,
     zcr: zcrValue,
@@ -179,31 +179,30 @@ function update() {
  */
 function detectFocus(rmsHistory, centroidHistory, currentRms, currentCentroid) {
   const { steadyThreshold } = settings;
-  
+
   if (rmsHistory.length < 3) {
     return { focusLevel: 0.5, isEngaged: false, isSteady: false, isMonotonous: false };
   }
-  
+
   // Calculate variance for RMS and centroid
   const rmsVariance = calculateVariance(rmsHistory);
   const centroidVariance = calculateVariance(centroidHistory);
-  
+
   // Low variance in both = focused, steady activity
   // High variance = erratic, unfocused
   const isSteady = rmsVariance < steadyThreshold && centroidVariance < steadyThreshold;
-  
+
   // Engagement: moderate RMS (not silent, not too loud)
   const rmsEngagement = currentRms > 0.1 && currentRms < 0.8;
-  
+
   // Monotony: very low variance over extended period
   const isMonotonous = rmsVariance < 0.05 && centroidVariance < 0.05;
-  
+
   // Focus level: combination of steadiness and appropriate activity level
-  const focusLevel = isSteady && rmsEngagement ? 0.8 : 
-                     rmsEngagement ? 0.6 : 0.3;
-  
+  const focusLevel = isSteady && rmsEngagement ? 0.8 : rmsEngagement ? 0.6 : 0.3;
+
   const isEngaged = rmsEngagement && !isMonotonous;
-  
+
   return { focusLevel, isEngaged, isSteady, isMonotonous };
 }
 
@@ -243,14 +242,19 @@ function setup() {
   continuously(() => {
     use();
   }, settings.sketchUseSpeedMs).start();
-
+  // Add reset button handler for user preferences
+  window.addEventListener(`keydown`, (event) => {
+    if (event.key === `r` || event.key === `R`) {
+      Things.resetUserPreferences();
+    }
+  });
   // Resume audio context on user gesture
   window.addEventListener(`click`, async () => {
     console.log(`Event click. Resuming audio context if needed.`);
 
     await Things.initAudio();
     const ctx = Things.getAudioCtx();
-    
+
     if (ctx) {
       ctx.resume().then(() => {
         console.log(`AudioContext state after resume:`, ctx.state);
