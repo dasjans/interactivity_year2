@@ -4,12 +4,89 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, user-scalable=no">
-  <title>messing around</title>
+  <!-- <title>Focus-Adaptive Audio</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 20px;
+      font-family: system-ui, -apple-system, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      color: white;
+    }
+    
+    #things {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      background: rgba(255, 255, 255, 0.1);
+      padding: 20px;
+      border-radius: 10px;
+      backdrop-filter: blur(10px);
+    }
+    
+    h1 {
+      margin: 0 0 10px 0;
+      font-size: 24px;
+    }
+    
+    .status {
+      margin: 10px 0;
+      font-size: 14px;
+      opacity: 0.9;
+    }
+    
+    .instruction {
+      margin: 40px 0;
+      padding: 20px;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 10px;
+      backdrop-filter: blur(10px);
+      max-width: 600px;
+    }
+    
+    .instruction h2 {
+      margin-top: 0;
+    }
+    
+    .technique {
+      margin: 15px 0;
+      padding: 10px;
+      background: rgba(0, 0, 0, 0.2);
+      border-radius: 5px;
+    }
+  </style> -->
 </head>
 
 <body>
   <script type="importmap">{ "imports": { "@ixfx":"/demos-main/ixfx/index.js", "@ixfx/": "/demos-main/ixfx/" } }</script>
-  <section id="things"></section>
+  
+  <!-- <div class="instruction">
+    <h2>🎵 Focus-Adaptive Audio System</h2>
+    <p><strong>Click anywhere to start audio</strong></p>
+    <p>This system uses your microphone to detect focus patterns and adapts ambient audio to help you concentrate.</p>
+    
+    <div class="technique">
+      <strong>Technique 1: Adaptive Spectral Tilt</strong><br>
+      Adjusts tone warmth based on your activity steadiness
+    </div>
+    
+    <div class="technique">
+      <strong>Technique 2: Near/Far Crossfader</strong><br>
+      Sound "approaches" when engaged, "recedes" when idle
+    </div>
+    
+    <div class="technique">
+      <strong>Technique 3: Micro-Pulse Tremolo</strong><br>
+      Subtle rhythm that adapts to your activity patterns
+    </div>
+  </div> -->
+  
+  <section id="things">
+    <h1>Focus Monitor</h1>
+    <div class="status" id="status">Initializing...</div>
+  </section>
+  
   <script type="module" src="script.js"></script>
   <audio src="/demos-main/audio/rainstorm.mp3" id="rainstorm"></audio>
 </body>

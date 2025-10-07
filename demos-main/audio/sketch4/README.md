@@ -1,81 +1,176 @@
-# thing
+# Focus-Adaptive Audio System
 
-Demonstrates decoupling of thing state with the sketch state, having its own update logic and visual expression.
+An intelligent ambient audio system that uses microphone input to detect user focus patterns and adapts playback in real-time to enhance concentration.
 
-There is a `script.js` as usual, but most of the Thing-specific logic is in `thing.js`. There's also a `util.js` for a utility function.
+## Overview
 
-## index.html
+This project implements three adaptive audio techniques that respond to user activity patterns detected through microphone analysis:
 
-We have an empty DIV that is used to represent the thing:
+1. **Adaptive Spectral Tilt** - Adjusts tone warmth based on activity steadiness
+2. **Near/Far Crossfader** - Sound "approaches" when engaged, "recedes" when idle  
+3. **Micro-Pulse Tremolo** - Subtle rhythm that adapts to activity patterns
 
-```html
-<div id="thing"></div>
+## How It Works
+
+### Focus Detection
+
+The system analyzes microphone input using Meyda to extract audio features:
+- **RMS (Root Mean Square)** - Overall loudness/activity level
+- **Spectral Centroid** - Brightness of sound
+- **Zero Crossing Rate** - Rate of signal changes
+
+Focus is determined by analyzing variance in these features:
+- **Low variance** = Steady, focused activity (e.g., drawing, writing)
+- **High variance** = Erratic, unfocused activity
+- **Appropriate activity level** = Not silent, not too loud
+
+### Adaptive Techniques
+
+#### 1. Adaptive Spectral Tilt
+
+**What it does:** Adjusts the tonal quality of ambient sound to reward steady behavior.
+
+**How it works:**
+- Monitors RMS and spectral centroid against learned baselines
+- When activity exceeds baseline + threshold (τ = 0.15):
+  - Applies gentle high-shelf filter cut (-0.5 to -1.5 dB @ 5kHz)
+  - Attack: 60ms, Release: 200ms
+- When strokes are steady for ≥2 seconds:
+  - Applies low-shelf lift (+0.3 to +0.6 dB @ 200Hz)
+  - Makes sound warmer and more pleasant
+
+**Personalization:** 
+- Baselines adapt over time using Exponential Moving Average (EMA, α = 0.05)
+- User preferences stored in localStorage
+
+#### 2. Layer Crossfader with Distance Filter
+
+**What it does:** Creates spatial depth by crossfading between "near" and "far" versions of the same ambient sound.
+
+**How it works:**
+- Two versions of rainstorm.mp3 with different processing:
+  - **Near**: Brighter, less filtered (LPF @ 5kHz, +0.3dB shelf)
+  - **Far**: Darker, more filtered (LPF @ 2kHz, -0.5dB shelf)
+- When engaged:
+  - Crossfades to Near over 1.5-3s
+  - Sound feels closer and more present
+- When idle or monotonous (>8s inactivity):
+  - Crossfades to Far
+  - Sound recedes into background
+
+**Personalization:**
+- Tracks which cutoff frequencies correlate with longer focus sessions
+- Stores preferred Near/Far settings per user
+
+#### 3. Masked Micro-Pulse via Tremolo
+
+**What it does:** Adds subtle rhythmic movement to help pace activity without being distracting.
+
+**How it works:**
+- Oscillator modulates ambience gain at 72-84 BPM
+- Depth: 0.6-1.8 dB (mapped to 0.007-0.021 amplitude)
+- Adapts based on activity "jitter":
+  - Low jitter → Reduce depth (crisper, steadier feel)
+  - High jitter → Increase depth (wobbly, discourages chaos)
+
+**Personalization:**
+- Treats BPM as a 4-arm bandit problem
+- Learns which tempo maximizes focus time for this user
+- Current implementation uses default 76 BPM with adaptive depth
+
+### User Behavior Learning
+
+The system learns from user behavior over time:
+
+1. **Baseline Adaptation**
+   - RMS and centroid baselines adjust using EMA
+   - Slow adaptation (α = 0.05) prevents rapid drift
+   - Captures individual work style
+
+2. **Session Tracking**
+   - Total session time
+   - Total focus time
+   - Engagement patterns
+
+3. **Personalization Storage**
+   - Preferences saved to localStorage
+   - Includes baselines, preferred BPM, filter cutoffs
+   - Persists across sessions
+
+## Technical Implementation
+
+### Audio Architecture
+
+```
+Microphone Input → Meyda Analysis → Focus Detection → State Update
+                                                            ↓
+                            ┌───────────────────────────────┘
+                            ↓
+┌─────────── Technique 1: Adaptive Spectral Tilt ───────────┐
+│  Audio Buffer → High-Shelf Filter → Low-Shelf Filter      │
+│                           ↓                                │
+│                    Tremolo LFO (Technique 3)               │
+│                           ↓                                │
+│                      Gain Node → Master                    │
+└────────────────────────────────────────────────────────────┘
+
+┌──────────── Technique 2: Near/Far Crossfader ─────────────┐
+│  Near Buffer → LPF (5kHz) → High-Shelf → Gain → Master    │
+│  Far Buffer → LPF (2kHz) → High-Shelf → Gain → Master     │
+└────────────────────────────────────────────────────────────┘
 ```
 
-Some basic styling is used in the HTML file as well.
+### Key Files
 
-## script.js
+- **script.js** - Main application, focus detection, state management
+- **thing.js** - Audio setup and adaptive technique implementation  
+- **index.html** - UI and instructions
 
-We have settings as usual, where `thingId` matches an id of an element in HTML.
+### Audio Nodes Used
 
-```js
-const settings = Object.freeze({
-  thingUpdateSpeedMs: 10,
-  thingId: `thing`,
-  hueChange: 0.05,
-  movementDecay: 0.1
-});
-```
+- `BufferSourceNode` - Audio playback
+- `BiquadFilterNode` - High-shelf, low-shelf, low-pass filters
+- `GainNode` - Volume control and crossfading
+- `OscillatorNode` - Tremolo LFO generation
 
-A State type is defined. In this demo, we have two 'ambient' state things we want to model: the hue of the page and a 'movement' scalar. Movement will be used to gather the intensity of pointer movement. The state also holds the Thing.
+## Usage
 
-The Thing is defined as:
-```js
-position: Points.Point
-surprise: number
-elementId: string
-hue: number
-```
+1. **Click anywhere** to start audio (browser requirement)
+2. Grant microphone permission when prompted
+3. Begin your focused activity (drawing, writing, etc.)
+4. The system will:
+   - Learn your baseline activity patterns
+   - Adapt audio in real-time
+   - Store preferences for future sessions
 
-State is initialised, creating a new thing via `Thing.create`.
+## Focus Monitor Display
 
-```js
-/** @type {State}*/
-let state = Object.freeze({
-  thing: Thing.create(settings.thingId),
-  hue: 0,
-  movement: 0
-});
-```
+The UI shows real-time status:
+- **Engagement** - ✓ Engaged or ○ Not Engaged
+- **Focus Level** - 0-100% based on activity analysis
+- **Activity Level** - Current RMS as percentage
+- **Steady Count** - How long steady behavior has been maintained
 
-In `setup`, we listen for `pointermove` events on the document, accumulating it into `state.movement`. There is a loop that runs that updates the Thing and its visuals.
+## Future Enhancements
 
-An `update` function runs continuously, updating `state.hue` and `state.movement`. In this case, hue shifts gradually and the movement value decays to zero over time.
+Potential improvements:
+- Multi-armed bandit for tremolo BPM optimization
+- Scene swapping for extended monotony (>30-45s)
+- Onset detection for more nuanced activity tracking
+- Visual feedback showing which technique is active
+- Configurable parameters via UI controls
+- Export/import of user preferences
 
-## thing.js
+## Dependencies
 
-Here we define our Thing. It has a position, a scalar for 'surprise' (which is used to change the opacity of the element), its HTML element id, and its hue.
+- **Meyda** - Audio feature extraction library
+- **ixfx** - Utility functions for normalization and continuous loops
+- **Web Audio API** - Native browser audio processing
 
-```js
-/** 
- * @typedef Thing
- * @property {Points.Point} position
- * @property {number} surprise
- * @property {string} elementId
- * @property {number} hue
- */
-```
+## Browser Compatibility
 
-In thing.js we have `create`, `update` and `use` functions.
-
-`create` returns a new Thing, and is called from script.js during initialisation.
-
-`update` synthesizes a new Thing based on an input Thing and the ambient state from script.js. In this case, we:
-* interpolate the Thing's hue to track the ambient hue (meaning it lag behind a bit behind the page hue)
-* if there's any movement, add that to the 'surprise' value
-* decay the 'surprise' amount
-* sanity check all the values before returning a new Thing
-
-In script.js, the result of calling `update` is used to set `state.thing`.
-
-`use` updates the visuals of the Thing based on its state.
+Requires modern browser with:
+- Web Audio API support
+- MediaDevices.getUserMedia() for microphone
+- localStorage for personalization
+- ES6 modules support
