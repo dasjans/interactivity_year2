@@ -2,6 +2,7 @@ import * as Things from './thing.js';
 import * as Meyda from '../features/lib/index.js';
 import { continuously } from '@ixfx';
 import { Normalise, scalePercent } from '@ixfx/numbers.js';
+import { last } from '@ixfx/iterables.js';
 
 const settings = Object.freeze({
   // Meyda helper. Extended to include RMS, spectralCentroid, zcr for focus detection
@@ -33,7 +34,16 @@ const settings = Object.freeze({
 
   // Tremolo BPM options
   tremoloBpmOptions: [ 72, 76, 80, 84 ],
+
+  // Engagement tuning (new)
+  engagementGraceMs: 5000,    // remain engaged for this long after drawing stops
+  engageRequireMs: 200,       // brief debounce before entering engagement from drawing
+  engageMinFocus: 0.18        // allow engagement when focusLevel >= this (with steadiness)
 });
+// Internal state for engagement tracking
+let _lastDrawingTrue = 0;
+let _lastDrawingFalse = 0;
+let _engagedSince = 0;
 
 /** 
  * @typedef {Readonly<{
@@ -67,7 +77,7 @@ let state = Object.freeze({
   zcr: 0,
   rmsHistory: [],
   centroidHistory: [],
-  lastActivityTime: Date.now(),
+  lastActivityTime: performance.now(),
   focusLevel: 0.5,
   isEngaged: false,
   isSteady: false,
@@ -95,11 +105,11 @@ function use() {
     const rmsText = `Activity: ${(rms * 100).toFixed(0)}%`;
     const steadyText = steadyCount > 0 ? `Steady: ${steadyCount}` : ``;
     const drawingText = isDrawing ? `✏️ Drawing` : ``;
-    
+
     // Get filter experiment status from Things module
     const filterStatus = Things.getFilterExperimentStatus();
     const filterText = filterStatus ? `🔬 Testing: ${filterStatus}` : ``;
-    
+
     statusEl.innerHTML = `
       <div>${engagementText}</div>
       <div>${focusText}</div>
@@ -112,7 +122,7 @@ function use() {
 }
 
 function update() {
-  const { lastData } = state;
+  const { lastData, isDrawing: wasDrawing } = state;
   if (!lastData) return; // No audio feature data yet
 
   const { loudnessNormalise, spectralCentroidNormalise, rmsNormalise, focusWindowSize, steadyThreshold } = settings;
@@ -136,7 +146,15 @@ function update() {
   const focusMetrics = detectFocus(rmsHistory, centroidHistory, rmsNormalised, spectralCentroidNormalised);
 
   // Detect if activity is drawing based on loudness pattern (indices 18-20)
-  const isDrawing = detectDrawing(loudnessNormalised);
+  let isDrawing;
+  if (!wasDrawing || (lastLoudnessCheck + 250 < performance.now())) {
+    //console.log(lastLoudnessCheck + 500 < performance.now());
+    lastLoudnessCheck = performance.now();
+    //console.log(lastLoudnessCheck);
+    isDrawing = detectDrawing(loudnessNormalised);
+  } else if (wasDrawing) {
+    isDrawing = wasDrawing;
+  }
 
   // Update baselines using Exponential Moving Average (EMA) for slow, gradual adaptation
   // Alpha of 0.05 means each new value has 5% influence, providing smooth long-term learning
@@ -145,7 +163,7 @@ function update() {
   let centroidBaseline = state.centroidBaseline * (1 - emaAlpha) + spectralCentroidNormalised * emaAlpha;
 
   // Detect idle state
-  const now = Date.now();
+  const now = performance.now();
   const timeSinceActivity = now - state.lastActivityTime;
   const isIdle = timeSinceActivity > settings.idleTimeoutMs;
 
@@ -185,6 +203,45 @@ function update() {
     centroidBaseline,
     steadyCount
   });
+
+  // update drawing timestamps
+  if (isDrawing && !wasDrawing) {
+    _lastDrawingTrue = now;
+  }
+  if (!isDrawing && wasDrawing) {
+    _lastDrawingFalse = now;
+  }
+
+  // current engaged state
+  const wasEngaged = !!state.isEngaged;
+
+  // Determine entry conditions (lenient)
+  const focusSustained = (state.focusLevel ?? 0) >= settings.engageMinFocus && (state.steadyCount ?? 0) >= Math.ceil(settings.focusWindowSize / 2);
+
+  const drawingRecently = (now - _lastDrawingTrue) <= settings.engageRequireMs;
+
+  // Enter engagement if drawing or sustained focus
+  if (!wasEngaged) {
+    if (isDrawing && drawingRecently) {
+      saveState({ isEngaged: true });
+      _engagedSince = now;
+    } /* else if (focusSustained) {
+      saveState({ isEngaged: true });
+      _engagedSince = now;
+    } */
+  } else {
+    // Already engaged: remain engaged while drawing or within grace period
+    console.log(now - _lastDrawingFalse, `?`, settings.engagementGraceMs, `drawing?`, isDrawing);
+    const stoppedTooLong = (now - _lastDrawingFalse) > settings.engagementGraceMs;
+    console.log(stoppedTooLong);
+    if (!isDrawing && stoppedTooLong) {
+      saveState({ isEngaged: false });
+      _engagedSince = 0;
+    } /* else {
+      saveState({ isEngaged: true });
+      if (!_engagedSince) _engagedSince = now;
+    } */
+  }
 }
 
 /**
@@ -235,6 +292,8 @@ function detectFocus(rmsHistory, centroidHistory, currentRms, currentCentroid) {
   return { focusLevel, isEngaged, isSteady, isMonotonous };
 }
 
+
+let lastLoudnessCheck = 0;
 /**
  * Detect if the activity is likely drawing/sketching based on loudness pattern
  * Drawing typically creates a bell curve pattern in loudness indices 17-21 with peak at 19
@@ -243,36 +302,31 @@ function detectFocus(rmsHistory, centroidHistory, currentRms, currentCentroid) {
  * @returns {boolean} - True if the pattern suggests drawing activity
  */
 function detectDrawing(loudness) {
+  const { isDrawing } = state;
+  //console.log(`checking if drawing`);
   // Need at least 24 loudness values
   if (!loudness || loudness.length < 24) return false;
 
-  // Extract the relevant indices (17-21, with focus on 18-20)
-  const idx17 = loudness[17] || 0;
+  // Extract the relevant indices (18-20)
   const idx18 = loudness[18] || 0;
   const idx19 = loudness[19] || 0;
   const idx20 = loudness[20] || 0;
-  const idx21 = loudness[21] || 0;
 
   // Check if there's sufficient activity in this range
   const avgActivity = (idx18 + idx19 + idx20) / 3;
-  if (avgActivity < 0.1) return false; // Too quiet to be drawing
-
+  //console.log(`Average activity: ${avgActivity} (at idx18: ${idx18}, idx19: ${idx19}, idx20: ${idx20})`);
+  // if already drawing, be more lenient
+  if (isDrawing) {
+    if (avgActivity < 0.25) return false; // Too quiet to be drawing
+  } else {
+    if (avgActivity < 0.3) return false; // Too quiet to be drawing
+  }
   // Check for bell curve pattern: idx19 should be highest or near-highest
   // Being lenient as other sounds may interfere
-  const isPeakAt19 = idx19 >= idx18 * 0.8 && idx19 >= idx20 * 0.8;
-  
-  // Check that values decrease away from the peak (with tolerance)
-  const slopesDown17to19 = idx19 >= idx17 * 0.7 || idx18 >= idx17 * 0.7;
-  const slopesDown21to19 = idx19 >= idx21 * 0.7 || idx20 >= idx21 * 0.7;
-  
-  // Additional check: ensure it's not a flat line by checking variance
-  const values = [idx17, idx18, idx19, idx20, idx21];
-  const mean = values.reduce((a, b) => a + b, 0) / values.length;
-  const variance = values.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / values.length;
-  const hasVariation = variance > 0.005; // Require some variation to avoid flat patterns
-  
-  // Drawing is likely if we have a peak at 19, slopes down on both sides, and has variation
-  return isPeakAt19 && (slopesDown17to19 || slopesDown21to19) && hasVariation;
+  //const isPeakAt19 = idx19 >= idx18 * 0.88 && idx19 >= idx20 * 0.88;
+
+  // Drawing is likely if we have a peak at 19
+  return true;
 }
 
 /**

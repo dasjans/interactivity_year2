@@ -41,7 +41,8 @@ function loadUserPreferences() {
     if (stored) {
       console.log(`Loaded user preferences`, stored);
       const loaded = JSON.parse(stored);
-      
+      console.log(loaded);
+
       // Ensure backward compatibility and new fields exist
       if (!loaded.sessionData) loaded.sessionData = {};
       if (!loaded.sessionData.totalEngagedTime) loaded.sessionData.totalEngagedTime = loaded.sessionData.totalFocusTime || 0;
@@ -55,7 +56,7 @@ function loadUserPreferences() {
           currentExperiment: null
         };
       }
-      
+
       return loaded;
     }
   } catch (e) {
@@ -97,10 +98,6 @@ function saveUserPreferences(prefs) {
 let userPreferences = loadUserPreferences();
 
 export function resetUserPreferences() {
-  localStorage.removeItem(STORAGE_KEY);
-  userPreferences = loadUserPreferences();
-  console.log(`User preferences reset`);
-  
   // Log summary if there were experiments
   const { positive, negative, tested } = userPreferences.filterExperiments;
   if (tested.length > 0) {
@@ -109,9 +106,15 @@ export function resetUserPreferences() {
     console.log(`  Positive results: ${positive.length}`);
     console.log(`  Negative results: ${negative.length}`);
     if (positive.length > 0) {
-      console.log(`  Best filters:`, positive.map(p => `${p.filters.map(f => f.name).join('+')} (focus: ${p.avgFocusLevel.toFixed(2)})`).join(', '));
+      console.log(`  Best filters:`, positive.map(p => `${p.filters.map(f => f.name).join(`+`)} (focus: ${p.avgFocusLevel.toFixed(2)})`).join(`, `));
     }
   }
+  // Clear storage and reset
+  localStorage.removeItem(STORAGE_KEY); // Clear storage
+  userPreferences = loadUserPreferences(); // Reset to defaults
+  saveUserPreferences(userPreferences);
+  console.log(`User preferences reset to defaults`);
+  removeExperimentalFilters();
 }
 
 export const initAudio = async () => {
@@ -137,7 +140,6 @@ export const initAudio = async () => {
   highShelfFilter.type = `highshelf`;
   highShelfFilter.frequency.value = 5000;
   highShelfFilter.gain.value = 0;
-  //console.log(highShelfFilter);
 
   lowShelfFilter = audioCtx.createBiquadFilter();
   lowShelfFilter.type = `lowshelf`;
@@ -272,7 +274,6 @@ export const useAudio = (thing, ambientState) => {
   if (rms > rmsBaseline + tau || centroid > centroidBaseline + tau) {
     // Gentle high-shelf cut (-0.5 to -1.5 dB)
     const cutAmount = -0.5 - (Math.min((rms - rmsBaseline) / tau, 1.0) * 1.0);
-    //console.log(highShelfFilter);
     highShelfFilter.gain.setTargetAtTime(cutAmount, now, 0.06); // 60ms attack
   } else {
     highShelfFilter.gain.setTargetAtTime(0, now, 0.2); // 200ms release
@@ -319,7 +320,7 @@ export const useAudio = (thing, ambientState) => {
 
   // Personalization: track session metrics
   updatePersonalization(focusLevel, isEngaged, isSteady);
-  
+
   // Manage filter experimentation (called periodically, has internal logic)
   if (Math.random() < 0.01) { // 1% chance per call = check every ~10 seconds
     manageFilterExperiments();
@@ -346,7 +347,7 @@ function updatePersonalization(focusLevel, isEngaged, isSteady) {
     const experiment = userPreferences.filterExperiments.currentExperiment;
     experiment.duration += 0.1;
     experiment.focusTimeAccumulator += focusLevel * 0.1; // Weight by focus level
-    
+
     if (isEngaged) {
       experiment.engagedTime += 0.1;
     }
@@ -363,14 +364,14 @@ function updatePersonalization(focusLevel, isEngaged, isSteady) {
  * Each filter removes a narrow frequency band to see if it helps or hurts focus
  */
 const filterCandidates = [
-  { min: 1000, max: 1050, name: '1kHz-1.05kHz' },
-  { min: 300, max: 310, name: '300-310Hz' },
-  { min: 450, max: 465, name: '450-465Hz' },
-  { min: 2000, max: 2100, name: '2kHz-2.1kHz' },
-  { min: 750, max: 780, name: '750-780Hz' },
-  { min: 3500, max: 3600, name: '3.5kHz-3.6kHz' },
-  { min: 150, max: 165, name: '150-165Hz' },
-  { min: 5000, max: 5200, name: '5kHz-5.2kHz' }
+  { min: 1000, max: 1050, name: `1kHz-1.05kHz` },
+  { min: 300, max: 310, name: `300-310Hz` },
+  { min: 450, max: 465, name: `450-465Hz` },
+  { min: 2000, max: 2100, name: `2kHz-2.1kHz` },
+  { min: 750, max: 780, name: `750-780Hz` },
+  { min: 3500, max: 3600, name: `3.5kHz-3.6kHz` },
+  { min: 150, max: 165, name: `150-165Hz` },
+  { min: 5000, max: 5200, name: `5kHz-5.2kHz` }
 ];
 
 /**
@@ -386,10 +387,10 @@ function applyExperimentalFilters(filterConfigs) {
   // Create new filters
   for (const config of filterConfigs) {
     const notchFilter = audioCtx.createBiquadFilter();
-    notchFilter.type = 'notch';
+    notchFilter.type = `notch`;
     notchFilter.frequency.value = (config.min + config.max) / 2; // Center frequency
     notchFilter.Q.value = ((config.min + config.max) / 2) / (config.max - config.min); // Q based on bandwidth
-    
+
     experimentalFilters.push({
       filter: notchFilter,
       config: config
@@ -400,18 +401,18 @@ function applyExperimentalFilters(filterConfigs) {
   if (experimentalFilters.length > 0) {
     // Disconnect existing connection
     ambienceSource.disconnect();
-    
+
     // Rebuild chain: source -> experimental filters -> high shelf -> low shelf -> gain
     let currentNode = ambienceSource;
-    
+
     for (const { filter } of experimentalFilters) {
       currentNode.connect(filter);
       currentNode = filter;
     }
-    
+
     currentNode.connect(highShelfFilter);
-    
-    console.log(`Applied ${experimentalFilters.length} experimental filter(s):`, filterConfigs.map(f => f.name).join(', '));
+
+    console.log(`Applied ${experimentalFilters.length} experimental filter(s):`, filterConfigs.map(f => f.name).join(`, `));
   }
 }
 
@@ -425,13 +426,13 @@ function removeExperimentalFilters() {
       filter.disconnect();
     }
     experimentalFilters = [];
-    
+
     // Restore original connection
     if (ambienceSource && highShelfFilter) {
       ambienceSource.disconnect();
       ambienceSource.connect(highShelfFilter);
     }
-    
+
     console.log(`Removed experimental filters`);
   }
 }
@@ -446,16 +447,14 @@ function startFilterExperiment() {
   // Find untested filters
   const tested = userPreferences.filterExperiments.tested.map(t => t.name);
   const untested = filterCandidates.filter(f => !tested.includes(f.name));
-  
+
   // If all tested, clear and start over (retesting with new data)
-  const filterToTest = untested.length > 0 
-    ? untested[Math.floor(Math.random() * untested.length)]
-    : filterCandidates[Math.floor(Math.random() * filterCandidates.length)];
+  const filterToTest = untested.length > 0 ? untested[Math.floor(Math.random() * untested.length)] : filterCandidates[Math.floor(Math.random() * filterCandidates.length)];
 
   // Can test multiple filters at once (1-2 filters)
   const numFilters = Math.random() < 0.7 ? 1 : 2; // 70% chance of single filter
-  const filtersToTest = [filterToTest];
-  
+  const filtersToTest = [ filterToTest ];
+
   if (numFilters === 2) {
     const otherFilters = filterCandidates.filter(f => f.name !== filterToTest.name);
     if (otherFilters.length > 0) {
@@ -472,7 +471,7 @@ function startFilterExperiment() {
   };
 
   applyExperimentalFilters(filtersToTest);
-  console.log(`Started filter experiment:`, filtersToTest.map(f => f.name).join(' + '));
+  console.log(`Started filter experiment:`, filtersToTest.map(f => f.name).join(` + `));
 }
 
 /**
@@ -485,11 +484,11 @@ function endFilterExperiment() {
   // Calculate metrics
   const avgFocusLevel = experiment.focusTimeAccumulator / experiment.duration;
   const engagementRatio = experiment.engagedTime / experiment.duration;
-  
+
   // Determine if this filter helped or hurt
   // Threshold: avg focus > 0.6 and engagement > 0.5 = positive
   const isPositive = avgFocusLevel > 0.6 && engagementRatio > 0.5;
-  
+
   const result = {
     filters: experiment.filters,
     avgFocusLevel,
@@ -507,10 +506,10 @@ function endFilterExperiment() {
 
   if (isPositive) {
     userPreferences.filterExperiments.positive.push(result);
-    console.log(`✓ Filter experiment positive:`, result.filters.map(f => f.name).join(' + '), `(focus: ${avgFocusLevel.toFixed(2)}, engagement: ${engagementRatio.toFixed(2)})`);
+    console.log(`✓ Filter experiment positive:`, result.filters.map(f => f.name).join(` + `), `(focus: ${avgFocusLevel.toFixed(2)}, engagement: ${engagementRatio.toFixed(2)})`);
   } else {
     userPreferences.filterExperiments.negative.push(result);
-    console.log(`✗ Filter experiment negative:`, result.filters.map(f => f.name).join(' + '), `(focus: ${avgFocusLevel.toFixed(2)}, engagement: ${engagementRatio.toFixed(2)})`);
+    console.log(`✗ Filter experiment negative:`, result.filters.map(f => f.name).join(` + `), `(focus: ${avgFocusLevel.toFixed(2)}, engagement: ${engagementRatio.toFixed(2)})`);
   }
 
   // Clean up
@@ -547,8 +546,8 @@ function manageFilterExperiments() {
 export function getFilterExperimentStatus() {
   const { currentExperiment } = userPreferences.filterExperiments;
   if (!currentExperiment) return null;
-  
-  const filterNames = currentExperiment.filters.map(f => f.name).join(' + ');
+
+  const filterNames = currentExperiment.filters.map(f => f.name).join(` + `);
   const duration = Math.floor((Date.now() - currentExperiment.startTime) / 1000);
   return `${filterNames} (${duration}s)`;
 }
