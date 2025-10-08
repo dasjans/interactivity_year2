@@ -55,7 +55,7 @@ let _engagedSince = 0;
  *  loudness: Array<number> // Array of loudness values across frequency bands
  *  rms: number // Current Root Mean Square energy level (overall activity, 0-1 normalized)
  *  zcr: number // Zero Crossing Rate (rate of signal changes)
- *  drawingHistory: Array<boolean> // Rolling buffer of recent drawing detection values
+ *  drawingHistory: Array<boolean | undefined> // Rolling buffer of recent drawing detection values
  *  loudnessHistory: Array<number> // Rolling buffer of recent total loudness values for variance calculation
  *  centroidHistory: Array<number> // Rolling buffer of recent centroid values for variance calculation
  *  lastActivityTime: number // Timestamp of last detected meaningful sound activity
