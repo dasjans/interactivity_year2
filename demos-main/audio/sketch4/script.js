@@ -3,14 +3,16 @@ import * as Meyda from '../features/lib/index.js';
 import { continuously } from '@ixfx';
 import { Normalise, scalePercent } from '@ixfx/numbers.js';
 import { last } from '@ixfx/iterables.js';
+import { number } from '@ixfx/trackers.js';
 
 const settings = Object.freeze({
   // Meyda helper. Extended to include RMS, spectralCentroid, zcr for focus detection
   meyda: new Meyda.MeydaHelper({
     featureExtractors: [ `loudness`, `spectralCentroid`, `rms`, `zcr` ]
   }),
-  // Used to normalise values on 0..1 scale
-  loudnessNormalise: Normalise.stream(),
+  // create 25 normalisers for all 24 loudness bands and loudness total as an array
+  loudnessNormalise: Array.from({ length: 25 }, () => Normalise.stream()),
+  // Normalising functions for audio features
   spectralCentroidNormalise: Normalise.stream(),
   rmsNormalise: Normalise.stream(),
 
@@ -36,7 +38,7 @@ const settings = Object.freeze({
   tremoloBpmOptions: [ 72, 76, 80, 84 ],
 
   // Engagement tuning (new)
-  engagementGraceMs: 5000,    // remain engaged for this long after drawing stops
+  engagementGraceMs: 1000,    // remain engaged for this long after drawing stops
   engageRequireMs: 200,       // brief debounce before entering engagement from drawing
   engageMinFocus: 0.18        // allow engagement when focusLevel >= this (with steadiness)
 });
@@ -72,7 +74,7 @@ let _engagedSince = 0;
 let state = Object.freeze({
   thing: Things.create(),
   centroid: 0,
-  loudness: Array.from({ length: 24 }, () => 0),
+  loudness: Array.from({ length: 25 }, Number),
   rms: 0,
   zcr: 0,
   rmsHistory: [],
@@ -126,10 +128,16 @@ function update() {
   if (!lastData) return; // No audio feature data yet
 
   const { loudnessNormalise, spectralCentroidNormalise, rmsNormalise, focusWindowSize, steadyThreshold } = settings;
-
+  //console.log(loudnessNormalise);
   // 1. Compute changes to properties
-  // Get loudness for each index from 0 to 23 on a 0..1 scale
-  let loudnessNormalised = Array.from({ length: 24 }, (_, i) => loudnessNormalise(lastData.loudness.specific.at(i) ?? 0));
+  // Get loudness for each index from 0 to 23 and total on a 0..1 scale using normalisers
+  let loudnessNormalised = Array.from({ length: 25 }, (_, i) => {
+    if (i < 24) {
+      return loudnessNormalise[i](lastData.loudness.specific.at(i) ?? 0);
+    } else {
+      return loudnessNormalise[i](lastData.loudness.total ?? 0);
+    }
+  });
   let spectralCentroidNormalised = 0;
   if (!Number.isNaN(lastData.spectralCentroid)) spectralCentroidNormalised = spectralCentroidNormalise(lastData.spectralCentroid);
 
@@ -220,7 +228,7 @@ function update() {
       const timeSinceStopped = now - _lastDrawingFalse;
       const withinGracePeriod = timeSinceStopped <= settings.engagementGraceMs;
       isEngaged = withinGracePeriod;
-      
+
       if (!isEngaged) {
         _engagedSince = 0;
       }
@@ -230,7 +238,7 @@ function update() {
   // 2. Call saveState to save properties
   saveState({
     centroid: spectralCentroidNormalised,
-    loudness: loudnessNormalised,
+    loudness: loudnessNormalised, // Save only total loudness for now
     rms: rmsNormalised,
     zcr: zcrValue,
     rmsHistory,
@@ -300,7 +308,7 @@ let lastLoudnessCheck = 0;
 /**
  * Detect if the activity is likely drawing/sketching based on loudness pattern
  * Drawing typically creates a bell curve pattern in loudness indices 17-21 with peak at 19
- * 
+ *
  * @param {Array<number>} loudness - Array of normalized loudness values (0-1) for each frequency band
  * @returns {boolean} - True if the pattern suggests drawing activity
  */

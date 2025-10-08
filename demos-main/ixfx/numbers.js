@@ -1725,18 +1725,22 @@ __export(normalise_exports, {
 * If a value exceeds the default range, normalisation adjusts.
 * Errors are thrown if min/max defaults are NaN or if one attempts to
 * normalise NaN.
-* @returns
+* @typedef {(v: number) => number & { getMin: () => number, getMax: () => number }} NormaliseStreamFn
+* @returns { NormaliseStreamFn }
 */
 const stream = (minDefault, maxDefault) => {
 	let min$1 = minDefault ?? Number.MAX_SAFE_INTEGER;
 	let max$1 = maxDefault ?? Number.MIN_SAFE_INTEGER;
 	resultThrow(numberTest(min$1), numberTest(max$1));
-	return (v) => {
+	const fn = (v) => {
 		resultThrow(numberTest(v));
 		min$1 = Math.min(min$1, v);
 		max$1 = Math.max(max$1, v);
 		return scale$1(v, min$1, max$1);
 	};
+	fn.getMin = () => min$1;
+	fn.getMax = () => max$1;
+	return fn;
 };
 /**
 * Normalises an array. By default uses the actual min/max of the array
