@@ -175,7 +175,7 @@ function update() {
   const activityLevel = drawingCount / Math.max(drawingHistory.length, 1);
 
   // Detect focus based on loudness and centroid patterns
-  const focusMetrics = detectFocus(loudnessHistory, centroidHistory, totalLoudness, spectralCentroidNormalised);
+  const focusMetrics = detectFocus(loudnessHistory, centroidHistory, drawingHistory, totalLoudness, spectralCentroidNormalised);
 
   // Update baselines using Exponential Moving Average (EMA) for slow, gradual adaptation
   // Alpha of 0.05 means each new value has 5% influence, providing smooth long-term learning
@@ -272,16 +272,17 @@ function update() {
 
 /**
  * Detect focus based on audio feature patterns
- * This function analyzes the variance (stability) of loudness and spectral centroid over time
- * to determine if the user is in a focused state
+ * This function analyzes the variance (stability) of loudness and spectral centroid over time,
+ * as well as the consistency of drawing activity, to determine if the user is in a focused state
  * 
  * @param {Array<number>} loudnessHistory - Recent history of total loudness values
  * @param {Array<number>} centroidHistory - Recent history of spectral centroid values (sound brightness)
+ * @param {Array<boolean>} drawingHistory - Recent history of drawing detection values
  * @param {number} currentLoudness - Current total loudness value (0-1 normalized)
  * @param {number} currentCentroid - Current spectral centroid value (0-1 normalized)
  * @returns {{focusLevel: number, isEngaged: boolean, isSteady: boolean, isMonotonous: boolean}}
  */
-function detectFocus(loudnessHistory, centroidHistory, currentLoudness, currentCentroid) {
+function detectFocus(loudnessHistory, centroidHistory, drawingHistory, currentLoudness, currentCentroid) {
   const { steadyThreshold } = settings;
 
   if (loudnessHistory.length < 3) {
@@ -294,10 +295,31 @@ function detectFocus(loudnessHistory, centroidHistory, currentLoudness, currentC
   const loudnessVariance = calculateVariance(loudnessHistory);
   const centroidVariance = calculateVariance(centroidHistory);
 
-  // Low variance in both loudness and centroid indicates focused, steady activity
-  // (e.g., consistent drawing strokes, typing rhythm)
-  // High variance suggests erratic, unfocused behavior
-  const isSteady = loudnessVariance < steadyThreshold && centroidVariance < steadyThreshold;
+  // Calculate drawing consistency
+  // Steady drawing means frequent and consistent drawing activity
+  // Convert boolean history to numbers for variance calculation
+  const drawingNumeric = drawingHistory.map(d => d ? 1 : 0);
+  const drawingVariance = calculateVariance(drawingNumeric);
+  
+  // Calculate drawing frequency (percentage of time spent drawing)
+  const drawingFrequency = drawingNumeric.reduce((sum, val) => sum + val, 0) / drawingNumeric.length;
+  
+  // For steady state, we want:
+  // 1. Low variance in loudness and centroid (consistent sound)
+  // 2. Low variance in drawing (consistent drawing pattern)
+  // 3. Reasonable drawing frequency (not too sporadic, not constant either)
+  const audioSteady = loudnessVariance < steadyThreshold && centroidVariance < steadyThreshold;
+  
+  // Drawing is steady if:
+  // 1. Low variance (consistent pattern) AND reasonable frequency (20%+)
+  // 2. OR very high frequency (95%+) with zero variance (continuous drawing)
+  // This means the user is either consistently drawing at a steady rate,
+  // or continuously drawing without interruption
+  const drawingSteady = (drawingVariance < 0.3 && drawingFrequency > 0.2) || 
+                        (drawingVariance === 0 && drawingFrequency >= 0.95);
+  
+  // Overall steadiness requires both audio and drawing to be steady
+  const isSteady = audioSteady && drawingSteady;
 
   // Engagement check: user should have moderate loudness (not silent, not excessively loud)
   // Lowered the minimum threshold to be more lenient about detecting engagement
