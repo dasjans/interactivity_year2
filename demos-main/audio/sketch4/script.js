@@ -173,8 +173,7 @@ function update() {
     lastActivityTime = now;
   }
 
-  // Detect engagement and monotony
-  const isEngaged = focusMetrics.isEngaged && !isIdle;
+  // Detect monotony
   const isMonotonous = focusMetrics.isMonotonous;
 
   // Track steady behavior count
@@ -183,6 +182,49 @@ function update() {
     steadyCount++;
   } else {
     steadyCount = 0;
+  }
+
+  // Update drawing timestamps
+  if (isDrawing && !wasDrawing) {
+    _lastDrawingTrue = now;
+  }
+  if (!isDrawing && wasDrawing) {
+    _lastDrawingFalse = now;
+  }
+
+  // Compute engagement with grace period logic
+  const wasEngaged = !!state.isEngaged;
+  let isEngaged;
+
+  if (!wasEngaged) {
+    // Not currently engaged - enter engagement if drawing
+    if (isDrawing) {
+      const drawingRecently = (now - _lastDrawingTrue) <= settings.engageRequireMs;
+      if (drawingRecently) {
+        isEngaged = true;
+        _engagedSince = now;
+      } else {
+        isEngaged = false;
+      }
+    } else {
+      // Not drawing and not engaged
+      isEngaged = false;
+    }
+  } else {
+    // Already engaged - maintain engagement with grace period
+    if (isDrawing) {
+      // Still drawing, stay engaged
+      isEngaged = true;
+    } else {
+      // Stopped drawing - use grace period
+      const timeSinceStopped = now - _lastDrawingFalse;
+      const withinGracePeriod = timeSinceStopped <= settings.engagementGraceMs;
+      isEngaged = withinGracePeriod;
+      
+      if (!isEngaged) {
+        _engagedSince = 0;
+      }
+    }
   }
 
   // 2. Call saveState to save properties
@@ -203,45 +245,6 @@ function update() {
     centroidBaseline,
     steadyCount
   });
-
-  // update drawing timestamps
-  if (isDrawing && !wasDrawing) {
-    _lastDrawingTrue = now;
-  }
-  if (!isDrawing && wasDrawing) {
-    _lastDrawingFalse = now;
-  }
-
-  // current engaged state
-  const wasEngaged = !!state.isEngaged;
-
-  // Determine entry conditions (lenient)
-  const focusSustained = (state.focusLevel ?? 0) >= settings.engageMinFocus && (state.steadyCount ?? 0) >= Math.ceil(settings.focusWindowSize / 2);
-
-  const drawingRecently = (now - _lastDrawingTrue) <= settings.engageRequireMs;
-
-  // Enter engagement if drawing or sustained focus
-  if (!wasEngaged) {
-    if (isDrawing && drawingRecently) {
-      saveState({ isEngaged: true });
-      _engagedSince = now;
-    } /* else if (focusSustained) {
-      saveState({ isEngaged: true });
-      _engagedSince = now;
-    } */
-  } else {
-    // Already engaged: remain engaged while drawing or within grace period
-    console.log(now - _lastDrawingFalse, `?`, settings.engagementGraceMs, `drawing?`, isDrawing);
-    const stoppedTooLong = (now - _lastDrawingFalse) > settings.engagementGraceMs;
-    console.log(stoppedTooLong);
-    if (!isDrawing && stoppedTooLong) {
-      saveState({ isEngaged: false });
-      _engagedSince = 0;
-    } /* else {
-      saveState({ isEngaged: true });
-      if (!_engagedSince) _engagedSince = now;
-    } */
-  }
 }
 
 /**
