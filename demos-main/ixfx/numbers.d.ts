@@ -902,7 +902,12 @@ declare namespace normalise_d_exports {
  * normalise NaN.
  * @returns
  */
-declare const stream: (minDefault?: number, maxDefault?: number) => (v: number) => number;
+type NormaliseStreamFn = ((v: number) => number) & {
+  getMin: () => number;
+  getMax: () => number;
+};
+
+declare const stream: (minDefault?: number, maxDefault?: number) => NormaliseStreamFn;
 /**
  * Normalises an array. By default uses the actual min/max of the array
  * as the normalisation range. [ixfx Guide on Normalising](https://ixfx.fun/cleaning/normal/)

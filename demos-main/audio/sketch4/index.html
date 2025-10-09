@@ -4,88 +4,225 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, user-scalable=no">
-  <!-- <title>Focus-Adaptive Audio</title>
+  <title>Focus-Adaptive Audio</title>
+  <link rel="stylesheet" href="/demos-main/base.css">
   <style>
     body {
       margin: 0;
       padding: 20px;
-      font-family: system-ui, -apple-system, sans-serif;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      min-height: 100vh;
-      color: white;
     }
     
-    #things {
+    #uiContainer {
+      transition: opacity 0.3s ease;
+    }
+    
+    #uiContainer.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+    
+    #statusPanel {
       position: fixed;
       top: 20px;
       right: 20px;
-      background: rgba(255, 255, 255, 0.1);
+      background: var(--bg);
+      border: 1px solid var(--accent);
       padding: 20px;
-      border-radius: 10px;
-      backdrop-filter: blur(10px);
+      border-radius: 8px;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+      min-width: 280px;
     }
     
-    h1 {
-      margin: 0 0 10px 0;
-      font-size: 24px;
+    #statusPanel h1 {
+      margin: 0 0 15px 0;
+      font-size: 1.5em;
+      color: var(--accent);
     }
     
-    .status {
-      margin: 10px 0;
-      font-size: 14px;
-      opacity: 0.9;
+    .status-item {
+      margin: 8px 0;
+      font-size: 0.95em;
+      line-height: 1.4;
     }
     
-    .instruction {
-      margin: 40px 0;
+    #controlsPanel {
+      position: fixed;
+      bottom: 20px;
+      left: 20px;
+      background: var(--bg);
+      border: 1px solid var(--accent);
       padding: 20px;
-      background: rgba(255, 255, 255, 0.1);
-      border-radius: 10px;
-      backdrop-filter: blur(10px);
-      max-width: 600px;
+      border-radius: 8px;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+      max-width: 400px;
     }
     
-    .instruction h2 {
-      margin-top: 0;
+    #controlsPanel h2 {
+      margin: 0 0 15px 0;
+      font-size: 1.2em;
+      color: var(--accent);
     }
     
-    .technique {
+    .control-group {
       margin: 15px 0;
-      padding: 10px;
-      background: rgba(0, 0, 0, 0.2);
-      border-radius: 5px;
     }
-  </style> -->
+    
+    .control-group label {
+      display: block;
+      margin-bottom: 5px;
+      font-size: 0.9em;
+      font-weight: 500;
+    }
+    
+    .control-group input[type="range"] {
+      width: 100%;
+      margin: 5px 0;
+    }
+    
+    .control-group input[type="number"] {
+      width: 80px;
+      padding: 4px 8px;
+      border: 1px solid var(--accent);
+      border-radius: 4px;
+      background: var(--bg);
+      color: var(--fg);
+      font-family: var(--font);
+    }
+    
+    .control-value {
+      display: inline-block;
+      margin-left: 10px;
+      font-size: 0.85em;
+      color: var(--accent);
+      font-weight: 600;
+    }
+    
+    #keyHintsPanel {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      background: var(--bg);
+      border: 1px solid var(--accent);
+      padding: 15px;
+      border-radius: 8px;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+      font-size: 0.9em;
+    }
+    
+    #keyHintsPanel h3 {
+      margin: 0 0 10px 0;
+      font-size: 1em;
+      color: var(--accent);
+    }
+    
+    .key-hint {
+      margin: 5px 0;
+      display: flex;
+      align-items: center;
+    }
+    
+    .key-hint kbd {
+      background: var(--accent-darker);
+      color: var(--fg);
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-family: monospace;
+      font-size: 0.9em;
+      min-width: 30px;
+      text-align: center;
+      display: inline-block;
+      margin-right: 10px;
+    }
+    
+    #toggleButton {
+      position: fixed;
+      top: 20px;
+      left: 20px;
+      background: var(--accent);
+      color: var(--bg);
+      border: none;
+      padding: 10px 15px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-family: var(--font);
+      font-size: 1em;
+      font-weight: 600;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+      z-index: 1000;
+    }
+    
+    #toggleButton:hover {
+      background: var(--accent-darker);
+    }
+  </style>
 </head>
 
 <body>
   <script type="importmap">{ "imports": { "@ixfx":"/demos-main/ixfx/index.js", "@ixfx/": "/demos-main/ixfx/" } }</script>
   
-  <!-- <div class="instruction">
-    <h2>🎵 Focus-Adaptive Audio System</h2>
-    <p><strong>Click anywhere to start audio</strong></p>
-    <p>This system uses your microphone to detect focus patterns and adapts ambient audio to help you concentrate.</p>
-    
-    <div class="technique">
-      <strong>Technique 1: Adaptive Spectral Tilt</strong><br>
-      Adjusts tone warmth based on your activity steadiness
-    </div>
-    
-    <div class="technique">
-      <strong>Technique 2: Near/Far Crossfader</strong><br>
-      Sound "approaches" when engaged, "recedes" when idle
-    </div>
-    
-    <div class="technique">
-      <strong>Technique 3: Micro-Pulse Tremolo</strong><br>
-      Subtle rhythm that adapts to your activity patterns
-    </div>
-  </div> -->
+  <button id="toggleButton">Press I to toggle UI</button>
   
-  <section id="things">
-    <h1>Focus Monitor</h1>
-    <div class="status" id="status">Initializing...</div>
-  </section>
+  <div id="uiContainer">
+    <section id="statusPanel">
+      <h1>Focus Monitor</h1>
+      <div id="status">
+        <div class="status-item">Initializing...</div>
+        <div class="status-item">Press SPACE to start audio</div>
+      </div>
+    </section>
+    
+    <section id="controlsPanel">
+      <h2>Drawing Detection Controls</h2>
+      
+      <div class="control-group">
+        <label for="centerIndex">
+          Center Index (Frequency Band)
+          <span class="control-value" id="centerIndexValue">19</span>
+        </label>
+        <input type="range" id="centerIndex" min="4" max="23" value="19" step="1">
+      </div>
+      
+      <div class="control-group">
+        <label for="rangeSize">
+          Range Size (±Bands)
+          <span class="control-value" id="rangeSizeValue">2</span>
+        </label>
+        <input type="range" id="rangeSize" min="1" max="4" value="2" step="1">
+      </div>
+      
+      <div class="control-group">
+        <label for="activityThreshold">
+          Activity Threshold
+          <span class="control-value" id="activityThresholdValue">0.55</span>
+        </label>
+        <input type="range" id="activityThreshold" min="0.1" max="1.0" value="0.55" step="0.05">
+      </div>
+      
+      <div class="control-group">
+        <label for="activityThresholdDrawing">
+          Drawing Threshold
+          <span class="control-value" id="activityThresholdDrawingValue">0.40</span>
+        </label>
+        <input type="range" id="activityThresholdDrawing" min="0.1" max="1.0" value="0.40" step="0.05">
+      </div>
+      
+      <div class="control-group">
+        <label>
+          <input type="checkbox" id="autoAdjust" checked>
+          Auto-Adjust Enabled
+        </label>
+      </div>
+    </section>
+    
+    <section id="keyHintsPanel">
+      <h3>Keyboard Shortcuts</h3>
+      <div class="key-hint"><kbd>SPACE</kbd> Start audio</div>
+      <div class="key-hint"><kbd>E</kbd> End session</div>
+      <div class="key-hint"><kbd>S</kbd> Start session</div>
+      <div class="key-hint"><kbd>R</kbd> Reset preferences</div>
+      <div class="key-hint"><kbd>I</kbd> Toggle UI visibility</div>
+    </section>
+  </div>
   
   <script type="module" src="script.js"></script>
   <audio src="/demos-main/audio/rainstorm.mp3" id="rainstorm"></audio>

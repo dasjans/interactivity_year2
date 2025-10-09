@@ -2,14 +2,17 @@ import * as Things from './thing.js';
 import * as Meyda from '../features/lib/index.js';
 import { continuously } from '@ixfx';
 import { Normalise, scalePercent } from '@ixfx/numbers.js';
+import { last } from '@ixfx/iterables.js';
+import { number } from '@ixfx/trackers.js';
 
 const settings = Object.freeze({
   // Meyda helper. Extended to include RMS, spectralCentroid, zcr for focus detection
   meyda: new Meyda.MeydaHelper({
     featureExtractors: [ `loudness`, `spectralCentroid`, `rms`, `zcr` ]
   }),
-  // Used to normalise values on 0..1 scale
-  loudnessNormalise: Normalise.stream(),
+  // create 25 normalisers for all 24 loudness bands and loudness total as an array
+  loudnessNormalise: Array.from({ length: 25 }, () => Normalise.stream()),
+  // Normalising functions for audio features
   spectralCentroidNormalise: Normalise.stream(),
   rmsNormalise: Normalise.stream(),
 
@@ -21,10 +24,10 @@ const settings = Object.freeze({
   sketchUseSpeedMs: 10,
 
   // Focus detection parameters
-  focusWindowSize: 20, // Number of samples to analyze for focus
-  steadyThreshold: 0.15, // Threshold for "steady" behavior
-  idleTimeoutMs: 8000, // Time to consider user idle (8s)
-  monotonyWindowMs: 25000, // Window for monotony detection (25s)
+  focusWindowSize: 20, // Number of recent audio samples to keep in history buffers for variance analysis
+  steadyThreshold: 0.2, // Maximum variance allowed to consider behavior "steady" (higher = more lenient, easier to be focused)
+  idleTimeoutMs: 8000, // Milliseconds of inactivity before user is considered idle (8s)
+  monotonyWindowMs: 25000, // Time window for detecting monotonous behavior (25s)
 
   // Adaptive audio parameters
   tiltAttackMs: 60,
@@ -33,26 +36,56 @@ const settings = Object.freeze({
 
   // Tremolo BPM options
   tremoloBpmOptions: [ 72, 76, 80, 84 ],
+
+  // Engagement tuning (new)
+  engagementGraceMs: 1000,    // remain engaged for this long after drawing stops
+  engageRequireMs: 200,       // brief debounce before entering engagement from drawing
+  engageMinFocus: 0.18,       // allow engagement when focusLevel >= this (with steadiness)
+  // drawingDetection: see below
+  drawingDetection: {
+    centerIndex: 19, // Primary peak index for drawing sounds
+    rangeSize: 2, // Number of indices on each side to check (18-20 default)
+    activityThreshold: 0.55, // Minimum activity level to detect drawing (while not drawing)
+    activityThresholdDrawing: 0.4, // More lenient when already drawing
+    autoAdjust: true, // Whether to auto-adjust based on user patterns
+    minIndex: 16, // Minimum allowed index
+    maxIndex: 23 // Maximum allowed index
+  },
+
 });
+
+
+// Internal state for engagement tracking
+let _lastDrawingTrue = 0;
+let _lastDrawingFalse = 0;
+let _engagedSince = 0;
+
+// Audio session control state
+let audioSessionActive = true; // Whether audio input/output is active
+let audioWasPausedByUser = false; // Track if user manually paused
 
 /** 
  * @typedef {Readonly<{
  *  lastData?: Meyda.MeydaAudioFeature
  *  thing: Things.Thing
- *  centroid: number
- *  loudness: Array<number>
- *  rms: number
- *  zcr: number
- *  rmsHistory: Array<number>
- *  centroidHistory: Array<number>
- *  lastActivityTime: number
- *  focusLevel: number
- *  isEngaged: boolean
- *  isMonotonous: boolean
- *  rmsBaseline: number
- *  centroidBaseline: number
- *  steadyCount: number
- *  currentTremoloBpm: number
+ *  centroid: number // Current spectral centroid (brightness of sound, 0-1 normalized)
+ *  loudness: Array<number> // Array of loudness values across frequency bands
+ *  rms: number // Current Root Mean Square energy level (overall activity, 0-1 normalized)
+ *  zcr: number // Zero Crossing Rate (rate of signal changes)
+ *  drawingHistory: Array<boolean> // Rolling buffer of recent drawing detection values
+ *  loudnessHistory: Array<number> // Rolling buffer of recent total loudness values for variance calculation
+ *  centroidHistory: Array<number> // Rolling buffer of recent centroid values for variance calculation
+ *  lastActivityTime: number // Timestamp of last detected meaningful sound activity
+ *  focusLevel: number // Computed focus score (0-1, where higher = more focused)
+ *  isEngaged: boolean // Whether user is actively engaged (moderate activity, not idle)
+ *  isSteady: boolean // Whether user's activity shows steady, consistent patterns
+ *  isMonotonous: boolean // Whether activity is too repetitive/monotonous
+ *  isDrawing: boolean // Whether the activity pattern suggests drawing/sketching
+ *  activityLevel: number // Activity level based on drawing history (0-1)
+ *  rmsBaseline: number // Learned baseline for user's typical RMS level (adapts over time)
+ *  centroidBaseline: number // Learned baseline for user's typical spectral centroid (adapts over time)
+ *  steadyCount: number // Counter for consecutive steady samples (resets when not steady)
+ *  currentTremoloBpm: number // Current tremolo beats per minute
  * }>} State
  */
 
@@ -60,15 +93,19 @@ const settings = Object.freeze({
 let state = Object.freeze({
   thing: Things.create(),
   centroid: 0,
-  loudness: Array.from({ length: 24 }, () => 0),
+  loudness: Array.from({ length: 25 }, Number),
   rms: 0,
   zcr: 0,
-  rmsHistory: [],
+  drawingHistory: [],
+  loudnessHistory: [],
   centroidHistory: [],
-  lastActivityTime: Date.now(),
+  lastActivityTime: performance.now(),
   focusLevel: 0.5,
   isEngaged: false,
+  isSteady: false,
   isMonotonous: false,
+  isDrawing: false,
+  activityLevel: 0,
   rmsBaseline: 0.1,
   centroidBaseline: 0.5,
   steadyCount: 0,
@@ -77,37 +114,75 @@ let state = Object.freeze({
 
 
 function use() {
-  const { centroid: agitation, loudness, isEngaged, focusLevel, rms, steadyCount } = state;
+  const { centroid: agitation, loudness, isEngaged, focusLevel, activityLevel, steadyCount, isDrawing } = state;
   // Visually update thing for testing
   Things.use(state.thing);
-  // Audio output handling
-  Things.useAudio(state.thing, state);
+  // Audio output handling (only if session is active)
+  if (audioSessionActive) {
+    Things.useAudio(state.thing, state);
+  }
 
   // Update status display
   const statusEl = document.getElementById(`status`);
   if (statusEl) {
     const engagementText = isEngaged ? `✓ Engaged` : `○ Not Engaged`;
     const focusText = `Focus: ${(focusLevel * 100).toFixed(0)}%`;
-    const rmsText = `Activity: ${(rms * 100).toFixed(0)}%`;
+    const activityText = `Activity: ${(activityLevel * 100).toFixed(0)}%`;
     const steadyText = steadyCount > 0 ? `Steady: ${steadyCount}` : ``;
+    const drawingText = isDrawing ? `✏️ Drawing` : ``;
+
+    // Get filter experiment status from Things module
+    const filterStatus = Things.getFilterExperimentStatus();
+    const filterText = filterStatus ? `🔬 Testing: ${filterStatus}` : ``;
+
+    // Get session state information
+    const sessionState = Things.getSessionState();
+    const sessionText = audioSessionActive ?
+      `Session: ${(sessionState.sessionDuration / 60).toFixed(1)}m` :
+      `🔇 Session paused`;
+    const focusSessionText = sessionState.focusDuration > 10 && audioSessionActive ?
+      `Focused: ${(sessionState.focusDuration / 60).toFixed(1)}m` :
+      ``;
+    const sessionWarning = sessionState.shouldEndSession && audioSessionActive ?
+      `⚠️ Time for a break` :
+      sessionState.extendedFocusBonus && audioSessionActive ?
+        `🌟 Extended session` :
+        ``;
+
+    // Drawing detection config info
+    const drawCfg = settings.drawingDetection;
+    const configText = `Draw detect: idx ${drawCfg.centerIndex}±${drawCfg.rangeSize} (${drawCfg.activityThreshold.toFixed(2)})`;
+
     statusEl.innerHTML = `
-      <div>${engagementText}</div>
-      <div>${focusText}</div>
-      <div>${rmsText}</div>
-      ${steadyText ? `<div>${steadyText}</div>` : ``}
+      <div class="status-item">${engagementText}</div>
+      <div class="status-item">${focusText}</div>
+      <div class="status-item">${activityText}</div>
+      ${steadyText ? `<div class="status-item">${steadyText}</div>` : ``}
+      ${drawingText ? `<div class="status-item" style="color: var(--accent);">${drawingText}</div>` : ``}
+      ${filterText ? `<div class="status-item" style="color: var(--accent);">${filterText}</div>` : ``}
+      <div class="status-item" style="color: ${audioSessionActive ? `var(--accent)` : `#ff6b6b`};">${sessionText}</div>
+      ${focusSessionText ? `<div class="status-item" style="color: var(--accent);">${focusSessionText}</div>` : ``}
+      ${sessionWarning ? `<div class="status-item" style="color: ${sessionState.shouldEndSession ? `#ff6b6b` : `var(--accent)`};">${sessionWarning}</div>` : ``}
+      <div class="status-item" style="font-size: 0.85em; opacity: 0.8;">${configText}</div>
     `;
   }
 }
 
 function update() {
-  const { lastData } = state;
+  const { lastData, isDrawing: wasDrawing } = state;
   if (!lastData) return; // No audio feature data yet
 
   const { loudnessNormalise, spectralCentroidNormalise, rmsNormalise, focusWindowSize, steadyThreshold } = settings;
-
+  //console.log(loudnessNormalise);
   // 1. Compute changes to properties
-  // Get loudness for each index from 0 to 23 on a 0..1 scale
-  let loudnessNormalised = Array.from({ length: 24 }, (_, i) => loudnessNormalise(lastData.loudness.specific.at(i) ?? 0));
+  // Get loudness for each index from 0 to 23 and total on a 0..1 scale using normalisers
+  let loudnessNormalised = Array.from({ length: 25 }, (_, i) => {
+    if (i < 24) {
+      return loudnessNormalise[i](lastData.loudness.specific.at(i) ?? 0);
+    } else {
+      return loudnessNormalise[i](lastData.loudness.total ?? 0);
+    }
+  });
   let spectralCentroidNormalised = 0;
   if (!Number.isNaN(lastData.spectralCentroid)) spectralCentroidNormalised = spectralCentroidNormalise(lastData.spectralCentroid);
 
@@ -115,21 +190,42 @@ function update() {
   let rmsNormalised = 0;
   if (!Number.isNaN(lastData.rms)) rmsNormalised = rmsNormalise(lastData.rms);
   let zcrValue = lastData.zcr ?? 0;
+  console.log(loudnessNormalised.slice(18, 21));
+  // Get total loudness (index 24 in the normalized array)
+  const totalLoudness = loudnessNormalised[24];
 
-  // Update history buffers
-  let rmsHistory = [ ...state.rmsHistory, rmsNormalised ].slice(-focusWindowSize);
+  // Update history buffers (keep only the most recent samples up to focusWindowSize)
+  let loudnessHistory = [ ...state.loudnessHistory, totalLoudness ].slice(-focusWindowSize);
   let centroidHistory = [ ...state.centroidHistory, spectralCentroidNormalised ].slice(-focusWindowSize);
 
-  // Detect focus based on activity patterns
-  const focusMetrics = detectFocus(rmsHistory, centroidHistory, rmsNormalised, spectralCentroidNormalised);
+  // Detect if activity is drawing based on loudness pattern (indices 18-20)
+  let isDrawing;
+  if (!wasDrawing || (lastLoudnessCheck + 250 < performance.now())) {
+    lastLoudnessCheck = performance.now();
+    isDrawing = detectDrawing(loudnessNormalised);
+  } else if (wasDrawing) {
+    isDrawing = wasDrawing;
+  }
 
-  // Update baselines with EMA (alpha = 0.05 for slow adaptation)
+  // Update drawing history buffer
+  let drawingHistory = [ ...state.drawingHistory, isDrawing ?? false ].slice(-focusWindowSize);
+
+  // Calculate activity level based on drawing history
+  // Activity is high when frequently drawing, low when not
+  const drawingCount = drawingHistory.filter(d => d).length;
+  const activityLevel = drawingCount / Math.max(drawingHistory.length, 1);
+
+  // Detect focus based on loudness and centroid patterns
+  const focusMetrics = detectFocus(loudnessHistory, centroidHistory, drawingHistory, totalLoudness, spectralCentroidNormalised);
+
+  // Update baselines using Exponential Moving Average (EMA) for slow, gradual adaptation
+  // Alpha of 0.05 means each new value has 5% influence, providing smooth long-term learning
   const emaAlpha = 0.05;
   let rmsBaseline = state.rmsBaseline * (1 - emaAlpha) + rmsNormalised * emaAlpha;
   let centroidBaseline = state.centroidBaseline * (1 - emaAlpha) + spectralCentroidNormalised * emaAlpha;
 
   // Detect idle state
-  const now = Date.now();
+  const now = performance.now();
   const timeSinceActivity = now - state.lastActivityTime;
   const isIdle = timeSinceActivity > settings.idleTimeoutMs;
 
@@ -139,8 +235,7 @@ function update() {
     lastActivityTime = now;
   }
 
-  // Detect engagement and monotony
-  const isEngaged = focusMetrics.isEngaged && !isIdle;
+  // Detect monotony
   const isMonotonous = focusMetrics.isMonotonous;
 
   // Track steady behavior count
@@ -151,59 +246,198 @@ function update() {
     steadyCount = 0;
   }
 
+  // Update drawing timestamps
+  if (isDrawing && !wasDrawing) {
+    _lastDrawingTrue = now;
+  }
+  if (!isDrawing && wasDrawing) {
+    _lastDrawingFalse = now;
+  }
+
+  // Compute engagement with grace period logic
+  const wasEngaged = !!state.isEngaged;
+  let isEngaged;
+
+  if (!wasEngaged) {
+    // Not currently engaged - enter engagement if drawing
+    if (isDrawing) {
+      const drawingRecently = (now - _lastDrawingTrue) <= settings.engageRequireMs;
+      if (drawingRecently) {
+        isEngaged = true;
+        _engagedSince = now;
+      } else {
+        isEngaged = false;
+      }
+    } else {
+      // Not drawing and not engaged
+      isEngaged = false;
+    }
+  } else {
+    // Already engaged - maintain engagement with grace period
+    if (isDrawing) {
+      // Still drawing, stay engaged
+      isEngaged = true;
+    } else {
+      // Stopped drawing - use grace period
+      const timeSinceStopped = now - _lastDrawingFalse;
+      const withinGracePeriod = timeSinceStopped <= settings.engagementGraceMs;
+      isEngaged = withinGracePeriod;
+
+      if (!isEngaged) {
+        _engagedSince = 0;
+      }
+    }
+  }
+
   // 2. Call saveState to save properties
   saveState({
     centroid: spectralCentroidNormalised,
     loudness: loudnessNormalised,
     rms: rmsNormalised,
     zcr: zcrValue,
-    rmsHistory,
+    drawingHistory,
+    loudnessHistory,
     centroidHistory,
     lastActivityTime,
     focusLevel: focusMetrics.focusLevel,
     isEngaged,
+    isSteady: focusMetrics.isSteady,
     isMonotonous,
+    isDrawing,
+    activityLevel,
     rmsBaseline,
     centroidBaseline,
     steadyCount
   });
+
+  // Check if session should end and stop audio if needed
+  const sessionState = Things.getSessionState();
+  if (sessionState.shouldEndSession && audioSessionActive && !audioWasPausedByUser) {
+    console.log(`⏸️ Session ended due to prolonged inactivity. Stopping audio...`);
+    stopAudioSession();
+  }
 }
 
 /**
  * Detect focus based on audio feature patterns
- * @param {Array<number>} rmsHistory 
- * @param {Array<number>} centroidHistory 
- * @param {number} currentRms 
- * @param {number} currentCentroid 
+ * This function analyzes the variance (stability) of loudness and spectral centroid over time,
+ * as well as the consistency of drawing activity, to determine if the user is in a focused state
+ * 
+ * @param {Array<number>} loudnessHistory - Recent history of total loudness values
+ * @param {Array<number>} centroidHistory - Recent history of spectral centroid values (sound brightness)
+ * @param {Array<boolean | undefined>} drawingHistory - Recent history of drawing detection values
+ * @param {number} currentLoudness - Current total loudness value (0-1 normalized)
+ * @param {number} currentCentroid - Current spectral centroid value (0-1 normalized)
  * @returns {{focusLevel: number, isEngaged: boolean, isSteady: boolean, isMonotonous: boolean}}
  */
-function detectFocus(rmsHistory, centroidHistory, currentRms, currentCentroid) {
+function detectFocus(loudnessHistory, centroidHistory, drawingHistory, currentLoudness, currentCentroid) {
   const { steadyThreshold } = settings;
 
-  if (rmsHistory.length < 3) {
+  if (loudnessHistory.length < 3) {
     return { focusLevel: 0.5, isEngaged: false, isSteady: false, isMonotonous: false };
   }
 
-  // Calculate variance for RMS and centroid
-  const rmsVariance = calculateVariance(rmsHistory);
+  // Calculate variance (measure of how much the values fluctuate)
+  // Low variance = consistent, steady behavior (potentially focused)
+  // High variance = erratic, changing behavior (potentially distracted)
+  const loudnessVariance = calculateVariance(loudnessHistory);
   const centroidVariance = calculateVariance(centroidHistory);
 
-  // Low variance in both = focused, steady activity
-  // High variance = erratic, unfocused
-  const isSteady = rmsVariance < steadyThreshold && centroidVariance < steadyThreshold;
+  // Calculate drawing consistency
+  // Steady drawing means frequent and consistent drawing activity
+  // Convert boolean history to numbers for variance calculation
+  const drawingNumeric = drawingHistory.map(d => d ? Number(1) : Number(0)); // This is a number[]
+  const drawingVariance = calculateVariance(drawingNumeric);
 
-  // Engagement: moderate RMS (not silent, not too loud)
-  const rmsEngagement = currentRms > 0.1 && currentRms < 0.8;
+  // Calculate drawing frequency (percentage of time spent drawing)
+  const drawingFrequency = drawingNumeric.reduce((sum, val) => sum + val, 0) / drawingNumeric.length;
 
-  // Monotony: very low variance over extended period
-  const isMonotonous = rmsVariance < 0.05 && centroidVariance < 0.05;
+  // For steady state, we want:
+  // 1. Low variance in loudness and centroid (consistent sound)
+  // 2. Low variance in drawing (consistent drawing pattern)
+  // 3. Reasonable drawing frequency (not too sporadic, not constant either)
+  const audioSteady = loudnessVariance < steadyThreshold && centroidVariance < steadyThreshold;
 
-  // Focus level: combination of steadiness and appropriate activity level
-  const focusLevel = isSteady && rmsEngagement ? 0.8 : rmsEngagement ? 0.6 : 0.3;
+  // Drawing is steady if:
+  // 1. Low variance (consistent pattern) AND reasonable frequency (20%+)
+  // 2. OR very high frequency (95%+) with zero variance (continuous drawing)
+  // This means the user is either consistently drawing at a steady rate,
+  // or continuously drawing without interruption
+  const drawingSteady = (drawingVariance < 0.3 && drawingFrequency > 0.2) ||
+                        (drawingVariance === 0 && drawingFrequency >= 0.95);
 
-  const isEngaged = rmsEngagement && !isMonotonous;
+  // Overall steadiness requires both audio and drawing to be steady
+  const isSteady = audioSteady && drawingSteady;
+
+  // Engagement check: user should have moderate loudness (not silent, not excessively loud)
+  // Lowered the minimum threshold to be more lenient about detecting engagement
+  const loudnessEngagement = currentLoudness > 0.05 && currentLoudness < 0.85;
+
+  // Monotony: very low variance over extended period (might indicate boredom or mechanical repetition)
+  const isMonotonous = loudnessVariance < 0.05 && centroidVariance < 0.05;
+
+  // Calculate focus level as a score from 0 to 1
+  // Highest score (0.8) when steady AND engaged
+  // Medium score (0.6) when engaged but not steady
+  // Low score (0.3) otherwise
+  const focusLevel = isSteady && loudnessEngagement ? 0.8 : loudnessEngagement ? 0.6 : 0.3;
+
+  // User is considered engaged if they have appropriate activity and it's not monotonous
+  const isEngaged = loudnessEngagement && !isMonotonous;
 
   return { focusLevel, isEngaged, isSteady, isMonotonous };
+}
+
+
+let lastLoudnessCheck = 0;
+/**
+ * Detect if the activity is likely drawing/sketching based on loudness pattern
+ * Drawing typically creates a bell curve pattern in loudness indices 17-21 with peak at 19
+ *
+ * @param {Array<number>} loudness - Array of normalized loudness values (0-1) for each frequency band
+ * @returns {boolean} - True if the pattern suggests drawing activity
+ */
+function detectDrawing(loudness) {
+  const { isDrawing } = state;
+  const { drawingDetection } = settings;
+
+  // Need at least 24 loudness values
+  if (!loudness || loudness.length < 24) return false;
+
+  const centerIdx = drawingDetection.centerIndex;
+  const rangeSize = drawingDetection.rangeSize;
+
+  // Extract indices dynamically based on configuration
+  const values = [];
+  for (let i = Math.max(drawingDetection.minIndex, centerIdx - rangeSize - 1);
+    i <= Math.min(drawingDetection.maxIndex, centerIdx + rangeSize + 1);
+    i++) {
+    values.push(loudness[i] || 0);
+  }
+
+  // Calculate average activity in the center range
+  let avgActivity = 0;
+  let count = 0;
+  for (let i = centerIdx - rangeSize; i <= centerIdx + rangeSize; i++) {
+    avgActivity += loudness[i] || 0;
+    count++;
+  }
+  avgActivity /= count;
+
+  // Use appropriate threshold based on current drawing state
+  const threshold = isDrawing ?
+    drawingDetection.activityThresholdDrawing :
+    drawingDetection.activityThreshold;
+
+  if (avgActivity < threshold) return false; // Too quiet to be drawing
+
+  // Auto-adjustment: learn from successful drawing patterns
+  if (drawingDetection.autoAdjust && isDrawing && avgActivity > 0.6) {
+    // Track successful drawing activity levels for potential auto-adjustment
+    // This could be expanded to actually adjust thresholds over time
+  }
+
+  return true;
 }
 
 /**
@@ -216,6 +450,88 @@ function calculateVariance(arr) {
   const mean = arr.reduce((a, b) => a + b, 0) / arr.length;
   const variance = arr.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / arr.length;
   return variance;
+}
+
+/**
+ * Stop audio input and output
+ */
+function stopAudioSession() {
+  audioSessionActive = false;
+  audioWasPausedByUser = true;
+
+  // Pause Meyda analysis
+  const { meyda } = settings;
+  if (meyda) {
+    meyda.paused = true;
+  }
+
+  // Stop audio output
+  Things.stopAudio();
+
+  console.log(`🔇 Audio session stopped. Press 'S' to start a new session.`);
+}
+
+/**
+ * Start/restart audio session
+ */
+async function startAudioSession() {
+  audioSessionActive = true;
+  audioWasPausedByUser = false;
+
+  // Resume Meyda analysis
+  const { meyda } = settings;
+  if (meyda) {
+    meyda.paused = false;
+  }
+
+  // Restart audio output
+  await Things.initAudio();
+  const ctx = Things.getAudioCtx();
+  if (ctx && ctx.state !== `running`) {
+    await ctx.resume();
+  }
+
+  // Start a fresh session in thing.js
+  Things.startNewSession();
+
+  console.log(`🔊 Audio session started. Session timer reset.`);
+}
+
+/**
+ * Adjust drawing detection parameters
+ * @param {Object} params - Parameters to adjust {centerIndex, rangeSize, activityThreshold, etc.}
+ */
+function adjustDrawingDetection(params) {
+  const current = settings.drawingDetection;
+
+  if (params.centerIndex !== undefined) {
+    const newCenter = Math.max(current.minIndex, Math.min(current.maxIndex, params.centerIndex));
+    settings.drawingDetection.centerIndex = newCenter;
+    console.log(`Drawing detection center index adjusted to: ${newCenter}`);
+  }
+
+  if (params.rangeSize !== undefined) {
+    settings.drawingDetection.rangeSize = Math.max(1, Math.min(4, params.rangeSize));
+    console.log(`Drawing detection range size adjusted to: ±${settings.drawingDetection.rangeSize}`);
+  }
+
+  if (params.activityThreshold !== undefined) {
+    settings.drawingDetection.activityThreshold = Math.max(0.1, Math.min(1.0, params.activityThreshold));
+    console.log(`Drawing detection threshold adjusted to: ${settings.drawingDetection.activityThreshold}`);
+  }
+
+  if (params.autoAdjust !== undefined) {
+    settings.drawingDetection.autoAdjust = params.autoAdjust;
+    console.log(`Drawing detection auto-adjust: ${params.autoAdjust ? `enabled` : `disabled`}`);
+  }
+
+  // Display current configuration
+  console.log(`Current drawing detection config:`, {
+    centerIndex: settings.drawingDetection.centerIndex,
+    range: `${settings.drawingDetection.centerIndex - settings.drawingDetection.rangeSize}-${settings.drawingDetection.centerIndex + settings.drawingDetection.rangeSize}`,
+    threshold: settings.drawingDetection.activityThreshold,
+    autoAdjust: settings.drawingDetection.autoAdjust
+  });
 }
 
 function setup() {
@@ -242,25 +558,136 @@ function setup() {
   continuously(() => {
     use();
   }, settings.sketchUseSpeedMs).start();
-  // Add reset button handler for user preferences
+
+  // Setup UI controls
+  setupUIControls();
+
+  // Add reset button handler for user preferences and key commands
   window.addEventListener(`keydown`, (event) => {
     if (event.key === `r` || event.key === `R`) {
       Things.resetUserPreferences();
+    } else if (event.key === `e` || event.key === `E`) {
+      // Stop audio session
+      stopAudioSession();
+    } else if (event.key === `s` || event.key === `S`) {
+      // Start new audio session
+      startAudioSession();
+    } else if (event.key === `i` || event.key === `I`) {
+      // Toggle UI visibility
+      toggleUIVisibility();
+    } else if (event.key === ` ` || event.code === `Space`) {
+      // Spacebar to start audio
+      event.preventDefault();
+      startAudioOnUserGesture();
     }
   });
-  // Resume audio context on user gesture
-  window.addEventListener(`click`, async () => {
-    console.log(`Event click. Resuming audio context if needed.`);
+}
 
-    await Things.initAudio();
-    const ctx = Things.getAudioCtx();
+/**
+ * Setup UI control elements and their event listeners
+ */
+function setupUIControls() {
+  const { drawingDetection } = settings;
+  // Center Index slider
+  const centerIndexInput = document.getElementById(`centerIndex`);
+  const centerIndexValue = document.getElementById(`centerIndexValue`);
+  if (centerIndexInput && centerIndexValue) {
+    centerIndexInput.value = drawingDetection.centerIndex;
+    centerIndexValue.textContent = drawingDetection.centerIndex;
+    centerIndexInput.addEventListener(`input`, (e) => {
+      const value = parseInt(e.target.value);
+      drawingDetection.centerIndex = value;
+      centerIndexValue.textContent = value;
+      console.log(`Drawing detection centerIndex updated to ${value}`);
+    });
+  }
 
-    if (ctx) {
-      ctx.resume().then(() => {
-        console.log(`AudioContext state after resume:`, ctx.state);
-      });
+  // Range Size slider
+  const rangeSizeInput = document.getElementById(`rangeSize`);
+  const rangeSizeValue = document.getElementById(`rangeSizeValue`);
+  if (rangeSizeInput && rangeSizeValue) {
+    rangeSizeInput.value = drawingDetection.rangeSize;
+    rangeSizeValue.textContent = drawingDetection.rangeSize;
+    rangeSizeInput.addEventListener(`input`, (e) => {
+      const value = parseInt(e.target.value);
+      drawingDetection.rangeSize = value;
+      rangeSizeValue.textContent = value;
+      console.log(`Drawing detection rangeSize updated to ${value}`);
+    });
+  }
+
+  // Activity Threshold slider
+  const activityThresholdInput = document.getElementById(`activityThreshold`);
+  const activityThresholdValue = document.getElementById(`activityThresholdValue`);
+  if (activityThresholdInput && activityThresholdValue) {
+    activityThresholdInput.value = drawingDetection.activityThreshold;
+    activityThresholdValue.textContent = drawingDetection.activityThreshold.toFixed(2);
+    activityThresholdInput.addEventListener(`input`, (e) => {
+      const value = parseFloat(e.target.value);
+      drawingDetection.activityThreshold = value;
+      activityThresholdValue.textContent = value.toFixed(2);
+      console.log(`Drawing detection activityThreshold updated to ${value.toFixed(2)}`);
+    });
+  }
+
+  // Activity Threshold Drawing slider
+  const activityThresholdDrawingInput = document.getElementById(`activityThresholdDrawing`);
+  const activityThresholdDrawingValue = document.getElementById(`activityThresholdDrawingValue`);
+  if (activityThresholdDrawingInput && activityThresholdDrawingValue) {
+    activityThresholdDrawingInput.value = drawingDetection.activityThresholdDrawing;
+    activityThresholdDrawingValue.textContent = drawingDetection.activityThresholdDrawing.toFixed(2);
+    activityThresholdDrawingInput.addEventListener(`input`, (e) => {
+      const value = parseFloat(e.target.value);
+      drawingDetection.activityThresholdDrawing = value;
+      activityThresholdDrawingValue.textContent = value.toFixed(2);
+      console.log(`Drawing detection activityThresholdDrawing updated to ${value.toFixed(2)}`);
+    });
+  }
+
+  // Auto Adjust checkbox
+  const autoAdjustInput = document.getElementById(`autoAdjust`);
+  if (autoAdjustInput) {
+    autoAdjustInput.checked = drawingDetection.autoAdjust;
+    autoAdjustInput.addEventListener(`change`, (e) => {
+      drawingDetection.autoAdjust = e.target.checked;
+      console.log(`Drawing detection autoAdjust updated to ${e.target.checked}`);
+    });
+  }
+}
+
+/**
+ * Toggle UI visibility
+ */
+function toggleUIVisibility() {
+  const uiContainer = document.getElementById(`uiContainer`);
+  if (uiContainer) {
+    uiContainer.classList.toggle(`hidden`);
+    console.log(`UI visibility toggled:`, !uiContainer.classList.contains(`hidden`));
+  }
+}
+
+/**
+ * Start audio on user gesture (spacebar)
+ */
+async function startAudioOnUserGesture() {
+  console.log(`Spacebar pressed. Starting audio context.`);
+
+  await Things.initAudio();
+  const ctx = Things.getAudioCtx();
+
+  if (ctx) {
+    await ctx.resume();
+    console.log(`AudioContext state after resume:`, ctx.state);
+
+    // Update status to show audio is ready
+    const statusEl = document.getElementById(`status`);
+    if (statusEl && ctx.state === `running`) {
+      const statusItem = statusEl.querySelector(`.status-item`);
+      if (statusItem) {
+        statusItem.textContent = `Audio active - monitoring focus...`;
+      }
     }
-  }, { once: true });
+  }
 }
 
 /**
