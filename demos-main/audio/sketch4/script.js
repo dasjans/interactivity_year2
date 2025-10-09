@@ -40,19 +40,22 @@ const settings = Object.freeze({
   // Engagement tuning (new)
   engagementGraceMs: 1000,    // remain engaged for this long after drawing stops
   engageRequireMs: 200,       // brief debounce before entering engagement from drawing
-  engageMinFocus: 0.18,        // allow engagement when focusLevel >= this (with steadiness)
-
-  // Drawing detection configuration (can be adjusted by user or auto-tuned)
-  drawingDetection: {
-    centerIndex: 19, // Primary peak index for drawing sounds
-    rangeSize: 2, // Number of indices on each side to check (18-20 default)
-    activityThreshold: 0.55, // Minimum activity level to detect drawing (while not drawing)
-    activityThresholdDrawing: 0.4, // More lenient when already drawing
-    autoAdjust: true, // Whether to auto-adjust based on user patterns
-    minIndex: 16, // Minimum allowed index
-    maxIndex: 23 // Maximum allowed index
-  }
+  engageMinFocus: 0.18        // allow engagement when focusLevel >= this (with steadiness)
 });
+
+// Drawing detection configuration (mutable, can be adjusted by user or auto-tuned)
+const drawingDetectionConfig = {
+  centerIndex: 19, // Primary peak index for drawing sounds
+  rangeSize: 2, // Number of indices on each side to check (18-20 default)
+  activityThreshold: 0.55, // Minimum activity level to detect drawing (while not drawing)
+  activityThresholdDrawing: 0.4, // More lenient when already drawing
+  autoAdjust: true, // Whether to auto-adjust based on user patterns
+  minIndex: 16, // Minimum allowed index
+  maxIndex: 23 // Maximum allowed index
+};
+
+// Add to settings for backward compatibility
+settings.drawingDetection = drawingDetectionConfig;
 // Internal state for engagement tracking
 let _lastDrawingTrue = 0;
 let _lastDrawingFalse = 0;
@@ -152,19 +155,16 @@ function use() {
     const configText = `Draw detect: idx ${drawCfg.centerIndex}±${drawCfg.rangeSize} (${drawCfg.activityThreshold.toFixed(2)})`;
 
     statusEl.innerHTML = `
-      <div>${engagementText}</div>
-      <div>${focusText}</div>
-      <div>${activityText}</div>
-      ${steadyText ? `<div>${steadyText}</div>` : ``}
-      ${drawingText ? `<div style="color: #90ee90;">${drawingText}</div>` : ``}
-      ${filterText ? `<div style="color: #ffd700;">${filterText}</div>` : ``}
-      <div style="color: ${audioSessionActive ? `#87ceeb` : `#ff6b6b`};">${sessionText}</div>
-      ${focusSessionText ? `<div style="color: #98fb98;">${focusSessionText}</div>` : ``}
-      ${sessionWarning ? `<div style="color: ${sessionState.shouldEndSession ? `#ff6b6b` : `#ffd700`};">${sessionWarning}</div>` : ``}
-      <div style="color: #dda0dd; font-size: 0.9em;">${configText}</div>
-      <div style="color: #999; font-size: 0.85em; margin-top: 8px;">
-        Keys: E=end, S=start, R=reset
-      </div>
+      <div class="status-item">${engagementText}</div>
+      <div class="status-item">${focusText}</div>
+      <div class="status-item">${activityText}</div>
+      ${steadyText ? `<div class="status-item">${steadyText}</div>` : ``}
+      ${drawingText ? `<div class="status-item" style="color: var(--accent);">${drawingText}</div>` : ``}
+      ${filterText ? `<div class="status-item" style="color: var(--accent);">${filterText}</div>` : ``}
+      <div class="status-item" style="color: ${audioSessionActive ? `var(--accent)` : `#ff6b6b`};">${sessionText}</div>
+      ${focusSessionText ? `<div class="status-item" style="color: var(--accent);">${focusSessionText}</div>` : ``}
+      ${sessionWarning ? `<div class="status-item" style="color: ${sessionState.shouldEndSession ? `#ff6b6b` : `var(--accent)`};">${sessionWarning}</div>` : ``}
+      <div class="status-item" style="font-size: 0.85em; opacity: 0.8;">${configText}</div>
     `;
   }
 }
@@ -597,6 +597,10 @@ function setup() {
   continuously(() => {
     use();
   }, settings.sketchUseSpeedMs).start();
+  
+  // Setup UI controls
+  setupUIControls();
+  
   // Add reset button handler for user preferences and key commands
   window.addEventListener(`keydown`, (event) => {
     if (event.key === `r` || event.key === `R`) {
@@ -607,21 +611,121 @@ function setup() {
     } else if (event.key === `s` || event.key === `S`) {
       // Start new audio session
       startAudioSession();
+    } else if (event.key === `i` || event.key === `I`) {
+      // Toggle UI visibility
+      toggleUIVisibility();
+    } else if (event.key === ` ` || event.code === `Space`) {
+      // Spacebar to start audio
+      event.preventDefault();
+      startAudioOnUserGesture();
     }
   });
-  // Resume audio context on user gesture
-  window.addEventListener(`click`, async () => {
-    console.log(`Event click. Resuming audio context if needed.`);
+}
 
-    await Things.initAudio();
-    const ctx = Things.getAudioCtx();
+/**
+ * Setup UI control elements and their event listeners
+ */
+function setupUIControls() {
+  // Center Index slider
+  const centerIndexInput = document.getElementById(`centerIndex`);
+  const centerIndexValue = document.getElementById(`centerIndexValue`);
+  if (centerIndexInput && centerIndexValue) {
+    centerIndexInput.value = drawingDetectionConfig.centerIndex;
+    centerIndexValue.textContent = drawingDetectionConfig.centerIndex;
+    centerIndexInput.addEventListener(`input`, (e) => {
+      const value = parseInt(e.target.value);
+      drawingDetectionConfig.centerIndex = value;
+      centerIndexValue.textContent = value;
+      console.log(`Drawing detection centerIndex updated to ${value}`);
+    });
+  }
+  
+  // Range Size slider
+  const rangeSizeInput = document.getElementById(`rangeSize`);
+  const rangeSizeValue = document.getElementById(`rangeSizeValue`);
+  if (rangeSizeInput && rangeSizeValue) {
+    rangeSizeInput.value = drawingDetectionConfig.rangeSize;
+    rangeSizeValue.textContent = drawingDetectionConfig.rangeSize;
+    rangeSizeInput.addEventListener(`input`, (e) => {
+      const value = parseInt(e.target.value);
+      drawingDetectionConfig.rangeSize = value;
+      rangeSizeValue.textContent = value;
+      console.log(`Drawing detection rangeSize updated to ${value}`);
+    });
+  }
+  
+  // Activity Threshold slider
+  const activityThresholdInput = document.getElementById(`activityThreshold`);
+  const activityThresholdValue = document.getElementById(`activityThresholdValue`);
+  if (activityThresholdInput && activityThresholdValue) {
+    activityThresholdInput.value = drawingDetectionConfig.activityThreshold;
+    activityThresholdValue.textContent = drawingDetectionConfig.activityThreshold.toFixed(2);
+    activityThresholdInput.addEventListener(`input`, (e) => {
+      const value = parseFloat(e.target.value);
+      drawingDetectionConfig.activityThreshold = value;
+      activityThresholdValue.textContent = value.toFixed(2);
+      console.log(`Drawing detection activityThreshold updated to ${value.toFixed(2)}`);
+    });
+  }
+  
+  // Activity Threshold Drawing slider
+  const activityThresholdDrawingInput = document.getElementById(`activityThresholdDrawing`);
+  const activityThresholdDrawingValue = document.getElementById(`activityThresholdDrawingValue`);
+  if (activityThresholdDrawingInput && activityThresholdDrawingValue) {
+    activityThresholdDrawingInput.value = drawingDetectionConfig.activityThresholdDrawing;
+    activityThresholdDrawingValue.textContent = drawingDetectionConfig.activityThresholdDrawing.toFixed(2);
+    activityThresholdDrawingInput.addEventListener(`input`, (e) => {
+      const value = parseFloat(e.target.value);
+      drawingDetectionConfig.activityThresholdDrawing = value;
+      activityThresholdDrawingValue.textContent = value.toFixed(2);
+      console.log(`Drawing detection activityThresholdDrawing updated to ${value.toFixed(2)}`);
+    });
+  }
+  
+  // Auto Adjust checkbox
+  const autoAdjustInput = document.getElementById(`autoAdjust`);
+  if (autoAdjustInput) {
+    autoAdjustInput.checked = drawingDetectionConfig.autoAdjust;
+    autoAdjustInput.addEventListener(`change`, (e) => {
+      drawingDetectionConfig.autoAdjust = e.target.checked;
+      console.log(`Drawing detection autoAdjust updated to ${e.target.checked}`);
+    });
+  }
+}
 
-    if (ctx) {
-      ctx.resume().then(() => {
-        console.log(`AudioContext state after resume:`, ctx.state);
-      });
+/**
+ * Toggle UI visibility
+ */
+function toggleUIVisibility() {
+  const uiContainer = document.getElementById(`uiContainer`);
+  if (uiContainer) {
+    uiContainer.classList.toggle(`hidden`);
+    console.log(`UI visibility toggled:`, !uiContainer.classList.contains(`hidden`));
+  }
+}
+
+/**
+ * Start audio on user gesture (spacebar)
+ */
+async function startAudioOnUserGesture() {
+  console.log(`Spacebar pressed. Starting audio context.`);
+  
+  await Things.initAudio();
+  const ctx = Things.getAudioCtx();
+  
+  if (ctx) {
+    await ctx.resume();
+    console.log(`AudioContext state after resume:`, ctx.state);
+    
+    // Update status to show audio is ready
+    const statusEl = document.getElementById(`status`);
+    if (statusEl && ctx.state === 'running') {
+      const statusItem = statusEl.querySelector('.status-item');
+      if (statusItem) {
+        statusItem.textContent = 'Audio active - monitoring focus...';
+      }
     }
-  }, { once: true });
+  }
 }
 
 /**
