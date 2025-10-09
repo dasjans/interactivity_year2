@@ -55,7 +55,7 @@ let _engagedSince = 0;
  *  loudness: Array<number> // Array of loudness values across frequency bands
  *  rms: number // Current Root Mean Square energy level (overall activity, 0-1 normalized)
  *  zcr: number // Zero Crossing Rate (rate of signal changes)
- *  drawingHistory: Array<boolean | undefined> // Rolling buffer of recent drawing detection values
+ *  drawingHistory: Array<boolean> // Rolling buffer of recent drawing detection values
  *  loudnessHistory: Array<number> // Rolling buffer of recent total loudness values for variance calculation
  *  centroidHistory: Array<number> // Rolling buffer of recent centroid values for variance calculation
  *  lastActivityTime: number // Timestamp of last detected meaningful sound activity
@@ -167,7 +167,7 @@ function update() {
   }
 
   // Update drawing history buffer
-  let drawingHistory = [ ...state.drawingHistory, isDrawing ].slice(-focusWindowSize);
+  let drawingHistory = [ ...state.drawingHistory, isDrawing ?? false ].slice(-focusWindowSize);
 
   // Calculate activity level based on drawing history
   // Activity is high when frequently drawing, low when not
@@ -277,7 +277,7 @@ function update() {
  * 
  * @param {Array<number>} loudnessHistory - Recent history of total loudness values
  * @param {Array<number>} centroidHistory - Recent history of spectral centroid values (sound brightness)
- * @param {Array<boolean>} drawingHistory - Recent history of drawing detection values
+ * @param {Array<boolean | undefined>} drawingHistory - Recent history of drawing detection values
  * @param {number} currentLoudness - Current total loudness value (0-1 normalized)
  * @param {number} currentCentroid - Current spectral centroid value (0-1 normalized)
  * @returns {{focusLevel: number, isEngaged: boolean, isSteady: boolean, isMonotonous: boolean}}
@@ -298,26 +298,26 @@ function detectFocus(loudnessHistory, centroidHistory, drawingHistory, currentLo
   // Calculate drawing consistency
   // Steady drawing means frequent and consistent drawing activity
   // Convert boolean history to numbers for variance calculation
-  const drawingNumeric = drawingHistory.map(d => d ? 1 : 0);
+  const drawingNumeric = drawingHistory.map(d => d ? Number(1) : Number(0)); // This is a number[]
   const drawingVariance = calculateVariance(drawingNumeric);
-  
+
   // Calculate drawing frequency (percentage of time spent drawing)
   const drawingFrequency = drawingNumeric.reduce((sum, val) => sum + val, 0) / drawingNumeric.length;
-  
+
   // For steady state, we want:
   // 1. Low variance in loudness and centroid (consistent sound)
   // 2. Low variance in drawing (consistent drawing pattern)
   // 3. Reasonable drawing frequency (not too sporadic, not constant either)
   const audioSteady = loudnessVariance < steadyThreshold && centroidVariance < steadyThreshold;
-  
+
   // Drawing is steady if:
   // 1. Low variance (consistent pattern) AND reasonable frequency (20%+)
   // 2. OR very high frequency (95%+) with zero variance (continuous drawing)
   // This means the user is either consistently drawing at a steady rate,
   // or continuously drawing without interruption
-  const drawingSteady = (drawingVariance < 0.3 && drawingFrequency > 0.2) || 
+  const drawingSteady = (drawingVariance < 0.3 && drawingFrequency > 0.2) ||
                         (drawingVariance === 0 && drawingFrequency >= 0.95);
-  
+
   // Overall steadiness requires both audio and drawing to be steady
   const isSteady = audioSteady && drawingSteady;
 
@@ -355,19 +355,27 @@ function detectDrawing(loudness) {
   // Need at least 24 loudness values
   if (!loudness || loudness.length < 24) return false;
 
-  // Extract the relevant indices (18-20)
+  // Extract the relevant indices (16-23)
+  const idx16 = loudness[16] || 0;
+  const idx17 = loudness[17] || 0;
   const idx18 = loudness[18] || 0;
   const idx19 = loudness[19] || 0;
   const idx20 = loudness[20] || 0;
+  const idx21 = loudness[21] || 0;
+  const idx22 = loudness[22] || 0;
+  const idx23 = loudness[23] || 0;
 
-  // Check if there's sufficient activity in this range
+  // Check if there's sufficient activity in the typical range 18-20
   const avgActivity = (idx18 + idx19 + idx20) / 3;
+  // Check if there is potentially low or high frequency activity instead
+  const lowFreqActivity = (idx16 + idx17) / 2;
+  const highFreqActivity = (idx21 + idx22 + idx23) / 3;
   //console.log(`Average activity: ${avgActivity} (at idx18: ${idx18}, idx19: ${idx19}, idx20: ${idx20})`);
   // if already drawing, be more lenient
   if (isDrawing) {
-    if (avgActivity < 0.25) return false; // Too quiet to be drawing
+    if (avgActivity < 0.25/*  || ((lowFreqActivity | highFreqActivity) < 0.7) */) return false; // Too quiet to be drawing
   } else {
-    if (avgActivity < 0.3) return false; // Too quiet to be drawing
+    if (avgActivity < 0.3 /* || ((lowFreqActivity | highFreqActivity) < 0.75) */) return false; // Too quiet to be drawing
   }
   // Check for bell curve pattern: idx19 should be highest or near-highest
   // Being lenient as other sounds may interfere
