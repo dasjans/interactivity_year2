@@ -359,7 +359,7 @@ export const getAudioCtx = () => audioCtx;
  */
 export const stopAudio = () => {
   if (!audioCtx) return;
-  
+
   // Stop all source nodes
   if (ambienceSource) {
     try {
@@ -382,7 +382,7 @@ export const stopAudio = () => {
       // Already stopped
     }
   }
-  
+
   console.log(`Audio playback stopped`);
 };
 
@@ -392,12 +392,12 @@ export const stopAudio = () => {
 export const startNewSession = async () => {
   // End current session and reset
   endCurrentSession();
-  
+
   // Reinitialize audio if needed
   if (audioCtx) {
     await initAudio();
   }
-  
+
   console.log(`New session started`);
 };
 

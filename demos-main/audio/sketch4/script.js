@@ -401,18 +401,18 @@ let lastLoudnessCheck = 0;
 function detectDrawing(loudness) {
   const { isDrawing } = state;
   const { drawingDetection } = settings;
-  
+
   // Need at least 24 loudness values
   if (!loudness || loudness.length < 24) return false;
 
   const centerIdx = drawingDetection.centerIndex;
   const rangeSize = drawingDetection.rangeSize;
-  
+
   // Extract indices dynamically based on configuration
   const values = [];
-  for (let i = Math.max(drawingDetection.minIndex, centerIdx - rangeSize - 1); 
-       i <= Math.min(drawingDetection.maxIndex, centerIdx + rangeSize + 1); 
-       i++) {
+  for (let i = Math.max(drawingDetection.minIndex, centerIdx - rangeSize - 1);
+    i <= Math.min(drawingDetection.maxIndex, centerIdx + rangeSize + 1);
+    i++) {
     values.push(loudness[i] || 0);
   }
 
@@ -426,10 +426,10 @@ function detectDrawing(loudness) {
   avgActivity /= count;
 
   // Use appropriate threshold based on current drawing state
-  const threshold = isDrawing ? 
-    drawingDetection.activityThresholdDrawing : 
+  const threshold = isDrawing ?
+    drawingDetection.activityThresholdDrawing :
     drawingDetection.activityThreshold;
-  
+
   if (avgActivity < threshold) return false; // Too quiet to be drawing
 
   // Auto-adjustment: learn from successful drawing patterns
@@ -459,16 +459,16 @@ function calculateVariance(arr) {
 function stopAudioSession() {
   audioSessionActive = false;
   audioWasPausedByUser = true;
-  
+
   // Pause Meyda analysis
   const { meyda } = settings;
   if (meyda) {
     meyda.paused = true;
   }
-  
+
   // Stop audio output
   Things.stopAudio();
-  
+
   console.log(`🔇 Audio session stopped. Press 'S' to start a new session.`);
 }
 
@@ -478,23 +478,23 @@ function stopAudioSession() {
 async function startAudioSession() {
   audioSessionActive = true;
   audioWasPausedByUser = false;
-  
+
   // Resume Meyda analysis
   const { meyda } = settings;
   if (meyda) {
     meyda.paused = false;
   }
-  
+
   // Restart audio output
   await Things.initAudio();
   const ctx = Things.getAudioCtx();
-  if (ctx && ctx.state !== 'running') {
+  if (ctx && ctx.state !== `running`) {
     await ctx.resume();
   }
-  
+
   // Start a fresh session in thing.js
   Things.startNewSession();
-  
+
   console.log(`🔊 Audio session started. Session timer reset.`);
 }
 
@@ -504,28 +504,28 @@ async function startAudioSession() {
  */
 function adjustDrawingDetection(params) {
   const current = settings.drawingDetection;
-  
+
   if (params.centerIndex !== undefined) {
     const newCenter = Math.max(current.minIndex, Math.min(current.maxIndex, params.centerIndex));
     settings.drawingDetection.centerIndex = newCenter;
     console.log(`Drawing detection center index adjusted to: ${newCenter}`);
   }
-  
+
   if (params.rangeSize !== undefined) {
     settings.drawingDetection.rangeSize = Math.max(1, Math.min(4, params.rangeSize));
     console.log(`Drawing detection range size adjusted to: ±${settings.drawingDetection.rangeSize}`);
   }
-  
+
   if (params.activityThreshold !== undefined) {
     settings.drawingDetection.activityThreshold = Math.max(0.1, Math.min(1.0, params.activityThreshold));
     console.log(`Drawing detection threshold adjusted to: ${settings.drawingDetection.activityThreshold}`);
   }
-  
+
   if (params.autoAdjust !== undefined) {
     settings.drawingDetection.autoAdjust = params.autoAdjust;
-    console.log(`Drawing detection auto-adjust: ${params.autoAdjust ? 'enabled' : 'disabled'}`);
+    console.log(`Drawing detection auto-adjust: ${params.autoAdjust ? `enabled` : `disabled`}`);
   }
-  
+
   // Display current configuration
   console.log(`Current drawing detection config:`, {
     centerIndex: settings.drawingDetection.centerIndex,
