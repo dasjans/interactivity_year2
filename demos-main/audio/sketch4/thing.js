@@ -141,23 +141,23 @@ export function resetUserPreferences() {
   // Log summary if there were experiments
   const { scores, tested, activeFilters } = userPreferences.filterExperiments;
   const { totalSessionTime, totalFocusTime, totalEngagedTime, totalSteadyTime, sessionsCompleted, avgSessionDuration } = userPreferences.sessionData;
-  
+
   if (tested.length > 0 || Object.keys(scores).length > 0) {
     console.log(`Filter Experiment Summary (before reset):`);
     console.log(`  Total tested: ${tested.length}`);
     console.log(`  Active filters: ${activeFilters.length}`);
-    
+
     // Show scores
     const scoreEntries = Object.entries(scores).sort((a, b) => b[1] - a[1]); // Sort by score descending
     if (scoreEntries.length > 0) {
       console.log(`  Filter effectiveness scores:`);
-      for (const [filterName, score] of scoreEntries) {
-        const status = score >= 50 ? '✓ ACTIVE' : score > 20 ? '+ positive' : score < -20 ? '- negative' : '○ neutral';
+      for (const [ filterName, score ] of scoreEntries) {
+        const status = score >= 50 ? `✓ ACTIVE` : score > 20 ? `+ positive` : score < -20 ? `- negative` : `○ neutral`;
         console.log(`    ${filterName}: ${score} (${status})`);
       }
     }
   }
-  
+
   // Log session statistics
   console.log(`\nSession Statistics:`);
   console.log(`  Total session time: ${(totalSessionTime / 60).toFixed(1)} minutes`);
@@ -169,17 +169,17 @@ export function resetUserPreferences() {
   if (sessionsCompleted > 0) {
     console.log(`  Avg session duration: ${(avgSessionDuration / 60).toFixed(1)} minutes`);
   }
-  
+
   // Complete current session before reset
   endCurrentSession();
-  
+
   // Clear storage and reset
   localStorage.removeItem(STORAGE_KEY); // Clear storage
   userPreferences = loadUserPreferences(); // Reset to defaults
   saveUserPreferences(userPreferences);
   console.log(`\nUser preferences reset to defaults`);
   removeExperimentalFilters();
-  
+
   // Reset session state
   sessionState = {
     startTime: Date.now(),
@@ -197,19 +197,19 @@ export function resetUserPreferences() {
  */
 function endCurrentSession() {
   const sessionDuration = (Date.now() - userPreferences.sessionData.currentSessionStart) / 1000;
-  
+
   if (sessionDuration > 60) { // Only count sessions longer than 1 minute
     userPreferences.sessionData.sessionsCompleted += 1;
     const totalSessions = userPreferences.sessionData.sessionsCompleted;
     const prevAvg = userPreferences.sessionData.avgSessionDuration;
-    
+
     // Update running average
-    userPreferences.sessionData.avgSessionDuration = 
+    userPreferences.sessionData.avgSessionDuration =
       ((prevAvg * (totalSessions - 1)) + sessionDuration) / totalSessions;
-    
+
     console.log(`Session ended. Duration: ${(sessionDuration / 60).toFixed(1)} minutes`);
   }
-  
+
   // Start new session
   userPreferences.sessionData.currentSessionStart = Date.now();
   sessionState.startTime = Date.now();
@@ -218,7 +218,7 @@ function endCurrentSession() {
   sessionState.shouldEndSession = false;
   sessionState.extendedFocusBonus = false;
   sessionState.unfocusedThreshold = 180000;
-  
+
   saveUserPreferences(userPreferences);
 }
 
@@ -230,7 +230,7 @@ export function getSessionState() {
   const sessionDuration = (Date.now() - sessionState.startTime) / 1000;
   const focusDuration = sessionState.focusedDuration / 1000;
   const unfocusDuration = sessionState.unfocusedDuration / 1000;
-  
+
   return {
     sessionDuration,
     focusDuration,
@@ -416,37 +416,37 @@ export const useAudio = (thing, ambientState) => {
   const timeSinceLastUpdate = now - distanceModulation.lastUpdate;
   if (timeSinceLastUpdate > 0.1) { // Update every 100ms
     distanceModulation.lastUpdate = now;
-    
+
     // Add small random variation to frequency for erratic effect
     if (Math.random() < 0.05) { // 5% chance to adjust erratic factor
       distanceModulation.erraticFactor = (Math.random() - 0.5) * 0.02; // ±0.01 frequency variation
     }
-    
+
     const effectiveFreq = distanceModulation.baseFrequency + distanceModulation.erraticFactor;
     distanceModulation.phase += effectiveFreq * timeSinceLastUpdate * 2 * Math.PI;
-    
+
     // Keep phase in 0-2π range
     if (distanceModulation.phase > 2 * Math.PI) {
       distanceModulation.phase -= 2 * Math.PI;
     }
   }
-  
+
   // Calculate distance modulation value (-1 to 1 sine wave)
   const distanceWave = Math.sin(distanceModulation.phase);
-  
+
   // Map sine wave to distance/energy parameters
   // When wave is positive: sounds feel closer/more energetic
   // When wave is negative: sounds feel farther/less energetic
   const energyModulation = 0.5 + distanceWave * 0.15; // 0.35 to 0.65 range
-  
+
   if (isEngaged && !isMonotonous) {
     // Crossfade to Near with modulation
     const nearLevel = 1.0 * energyModulation;
     const farLevel = 0.0 + (1 - energyModulation) * 0.1; // Slight far layer for depth
-    
+
     nearGain.gain.setTargetAtTime(nearLevel, now, 0.5); // 1.5-3s crossfade
     farGain.gain.setTargetAtTime(farLevel, now, 0.5);
-    
+
     // Modulate filter cutoffs based on distance wave
     const nearCutoff = 5000 + distanceWave * 800; // 4200-5800 Hz
     nearLpf.frequency.setTargetAtTime(nearCutoff, now, 0.5);
@@ -455,10 +455,10 @@ export const useAudio = (thing, ambientState) => {
     // Crossfade to Far with modulation
     const nearLevel = 0.0 + energyModulation * 0.1; // Slight near layer for presence
     const farLevel = 0.7 * (1 - energyModulation * 0.3); // 0.49 to 0.7 range
-    
+
     nearGain.gain.setTargetAtTime(nearLevel, now, 0.5);
     farGain.gain.setTargetAtTime(farLevel, now, 0.5);
-    
+
     // Modulate far layer filter
     const farCutoff = 2000 + distanceWave * 300; // 1700-2300 Hz
     farLpf.frequency.setTargetAtTime(farCutoff, now, 0.5);
@@ -735,7 +735,7 @@ function endFilterExperiment() {
     if (!userPreferences.filterExperiments.scores[filterName]) {
       userPreferences.filterExperiments.scores[filterName] = 0;
     }
-    
+
     // Add to cumulative score (cap at ±200)
     userPreferences.filterExperiments.scores[filterName] = clamp(
       userPreferences.filterExperiments.scores[filterName] + effectivenessScore,
@@ -764,7 +764,7 @@ function endFilterExperiment() {
   const filterNames = result.filters.map(f => f.name).join(` + `);
   const scoreDisplay = effectivenessScore > 0 ? `+${effectivenessScore}` : effectivenessScore;
   const totalScores = result.filters.map(f => `${f.name}: ${userPreferences.filterExperiments.scores[f.name]}`).join(`, `);
-  
+
   if (effectivenessScore > 5) {
     console.log(`✓✓ Filter experiment strongly positive: ${filterNames} (score: ${scoreDisplay}) [${totalScores}]`);
   } else if (effectivenessScore > 0) {
@@ -804,7 +804,7 @@ function updateActiveFilters() {
   }
 
   userPreferences.filterExperiments.activeFilters = newActiveFilters;
-  
+
   if (newActiveFilters.length > 0) {
     console.log(`Active filters updated:`, newActiveFilters.map(f => `${f.name} (${scores[f.name]})`).join(`, `));
   }
@@ -825,7 +825,7 @@ function manageFilterExperiments() {
     }
   } else {
     const now = Date.now();
-    
+
     // Check if it's time for a retest (approximately every 2 minutes = 120000ms)
     const timeSinceLastRetest = now - lastRetestTime;
     const shouldRetest = timeSinceLastRetest > 120000 && Object.keys(scores).length > 0;
@@ -835,10 +835,10 @@ function manageFilterExperiments() {
       const testedFilters = Object.keys(scores);
       const filterNameToRetest = testedFilters[Math.floor(Math.random() * testedFilters.length)];
       const filterToRetest = filterCandidates.find(f => f.name === filterNameToRetest);
-      
+
       if (filterToRetest) {
         userPreferences.filterExperiments.currentExperiment = {
-          filters: [filterToRetest],
+          filters: [ filterToRetest ],
           startTime: now,
           duration: 0,
           focusTimeAccumulator: 0,
@@ -847,8 +847,8 @@ function manageFilterExperiments() {
           steadyTime: 0,
           isRetest: true
         };
-        
-        applyExperimentalFilters([filterToRetest]);
+
+        applyExperimentalFilters([ filterToRetest ]);
         userPreferences.filterExperiments.lastRetestTime = now;
         console.log(`🔄 Retesting filter:`, filterToRetest.name, `(current score: ${scores[filterNameToRetest]})`);
       }
@@ -869,7 +869,7 @@ function manageFilterExperiments() {
  */
 function applyActiveFilters() {
   const { activeFilters } = userPreferences.filterExperiments;
-  
+
   if (activeFilters.length > 0 && experimentalFilters.length === 0) {
     applyExperimentalFilters(activeFilters);
     console.log(`Applied ${activeFilters.length} active filter(s) based on effectiveness scores`);

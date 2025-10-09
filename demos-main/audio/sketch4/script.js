@@ -115,18 +115,18 @@ function use() {
     // Get filter experiment status from Things module
     const filterStatus = Things.getFilterExperimentStatus();
     const filterText = filterStatus ? `🔬 Testing: ${filterStatus}` : ``;
-    
+
     // Get session state information
     const sessionState = Things.getSessionState();
     const sessionText = `Session: ${(sessionState.sessionDuration / 60).toFixed(1)}m`;
-    const focusSessionText = sessionState.focusDuration > 10 
-      ? `Focused: ${(sessionState.focusDuration / 60).toFixed(1)}m` 
-      : ``;
-    const sessionWarning = sessionState.shouldEndSession 
-      ? `⚠️ Time for a break` 
-      : sessionState.extendedFocusBonus 
-      ? `🌟 Extended session` 
-      : ``;
+    const focusSessionText = sessionState.focusDuration > 10 ?
+      `Focused: ${(sessionState.focusDuration / 60).toFixed(1)}m` :
+      ``;
+    const sessionWarning = sessionState.shouldEndSession ?
+      `⚠️ Time for a break` :
+      sessionState.extendedFocusBonus ?
+        `🌟 Extended session` :
+        ``;
 
     statusEl.innerHTML = `
       <div>${engagementText}</div>
@@ -137,7 +137,7 @@ function use() {
       ${filterText ? `<div style="color: #ffd700;">${filterText}</div>` : ``}
       <div style="color: #87ceeb;">${sessionText}</div>
       ${focusSessionText ? `<div style="color: #98fb98;">${focusSessionText}</div>` : ``}
-      ${sessionWarning ? `<div style="color: ${sessionState.shouldEndSession ? '#ff6b6b' : '#ffd700'};">${sessionWarning}</div>` : ``}
+      ${sessionWarning ? `<div style="color: ${sessionState.shouldEndSession ? `#ff6b6b` : `#ffd700`};">${sessionWarning}</div>` : ``}
     `;
   }
 }
@@ -164,7 +164,7 @@ function update() {
   let rmsNormalised = 0;
   if (!Number.isNaN(lastData.rms)) rmsNormalised = rmsNormalise(lastData.rms);
   let zcrValue = lastData.zcr ?? 0;
-
+  console.log(loudnessNormalised.slice(18, 21));
   // Get total loudness (index 24 in the normalized array)
   const totalLoudness = loudnessNormalised[24];
 
@@ -381,16 +381,16 @@ function detectDrawing(loudness) {
   const idx23 = loudness[23] || 0;
 
   // Check if there's sufficient activity in the typical range 18-20
-  const avgActivity = (idx18 + idx19 + idx20) / 3;
+  const avgActivity = ((idx18 * 2) + (idx19 * 1) + (idx20 * 2)) / 5;
   // Check if there is potentially low or high frequency activity instead
   const lowFreqActivity = (idx16 + idx17) / 2;
   const highFreqActivity = (idx21 + idx22 + idx23) / 3;
   //console.log(`Average activity: ${avgActivity} (at idx18: ${idx18}, idx19: ${idx19}, idx20: ${idx20})`);
   // if already drawing, be more lenient
   if (isDrawing) {
-    if (avgActivity < 0.25/*  || ((lowFreqActivity | highFreqActivity) < 0.7) */) return false; // Too quiet to be drawing
+    if (avgActivity < 0.4/*  || ((lowFreqActivity | highFreqActivity) < 0.7) */) return false; // Too quiet to be drawing
   } else {
-    if (avgActivity < 0.3 /* || ((lowFreqActivity | highFreqActivity) < 0.75) */) return false; // Too quiet to be drawing
+    if (avgActivity < 0.55 /* || ((lowFreqActivity | highFreqActivity) < 0.75) */) return false; // Too quiet to be drawing
   }
   // Check for bell curve pattern: idx19 should be highest or near-highest
   // Being lenient as other sounds may interfere
