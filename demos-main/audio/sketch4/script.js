@@ -115,6 +115,18 @@ function use() {
     // Get filter experiment status from Things module
     const filterStatus = Things.getFilterExperimentStatus();
     const filterText = filterStatus ? `🔬 Testing: ${filterStatus}` : ``;
+    
+    // Get session state information
+    const sessionState = Things.getSessionState();
+    const sessionText = `Session: ${(sessionState.sessionDuration / 60).toFixed(1)}m`;
+    const focusSessionText = sessionState.focusDuration > 10 
+      ? `Focused: ${(sessionState.focusDuration / 60).toFixed(1)}m` 
+      : ``;
+    const sessionWarning = sessionState.shouldEndSession 
+      ? `⚠️ Time for a break` 
+      : sessionState.extendedFocusBonus 
+      ? `🌟 Extended session` 
+      : ``;
 
     statusEl.innerHTML = `
       <div>${engagementText}</div>
@@ -123,6 +135,9 @@ function use() {
       ${steadyText ? `<div>${steadyText}</div>` : ``}
       ${drawingText ? `<div style="color: #90ee90;">${drawingText}</div>` : ``}
       ${filterText ? `<div style="color: #ffd700;">${filterText}</div>` : ``}
+      <div style="color: #87ceeb;">${sessionText}</div>
+      ${focusSessionText ? `<div style="color: #98fb98;">${focusSessionText}</div>` : ``}
+      ${sessionWarning ? `<div style="color: ${sessionState.shouldEndSession ? '#ff6b6b' : '#ffd700'};">${sessionWarning}</div>` : ``}
     `;
   }
 }

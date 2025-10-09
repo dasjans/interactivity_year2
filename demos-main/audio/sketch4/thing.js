@@ -19,12 +19,31 @@ let farLpf;
 let nearShelf;
 let farShelf;
 
+// Distance modulation for near/far layers (sine wave for gradual energy changes)
+let distanceModulation = {
+  phase: 0, // Current phase of the sine wave
+  baseFrequency: 0.05, // Very slow oscillation (~20 second cycle)
+  erraticFactor: 0, // Random variation to make it slightly erratic
+  lastUpdate: 0
+};
+
 // Technique 3: Tremolo nodes
 let tremoloOscillator;
 let tremoloGain;
 
 // Technique 4: Experimental frequency filters for personalization
 let experimentalFilters = []; // Array of bandpass filters being tested
+
+// Session management
+let sessionState = {
+  startTime: Date.now(),
+  unfocusedDuration: 0, // Time spent unfocused in current streak
+  focusedDuration: 0, // Time spent focused in current streak
+  lastFocusCheck: Date.now(),
+  shouldEndSession: false,
+  unfocusedThreshold: 180000, // 3 minutes of unfocused time ends session
+  extendedFocusBonus: false // Whether we've extended the session due to good performance
+};
 
 // Audio buffer for ambience
 let ambienceBuffer;
@@ -48,6 +67,10 @@ function loadUserPreferences() {
       if (!loaded.sessionData.totalEngagedTime) loaded.sessionData.totalEngagedTime = loaded.sessionData.totalFocusTime || 0;
       if (!loaded.sessionData.totalSteadyTime) loaded.sessionData.totalSteadyTime = 0;
       if (!loaded.sessionData.totalSessionTime) loaded.sessionData.totalSessionTime = 0;
+      if (!loaded.sessionData.totalFocusTime) loaded.sessionData.totalFocusTime = 0;
+      if (!loaded.sessionData.currentSessionStart) loaded.sessionData.currentSessionStart = Date.now();
+      if (!loaded.sessionData.sessionsCompleted) loaded.sessionData.sessionsCompleted = 0;
+      if (!loaded.sessionData.avgSessionDuration) loaded.sessionData.avgSessionDuration = 0;
       if (!loaded.filterExperiments) {
         loaded.filterExperiments = {
           tested: [],
@@ -83,7 +106,10 @@ function loadUserPreferences() {
       totalFocusTime: 0,
       totalSessionTime: 0,
       totalEngagedTime: 0, // Time spent in engaged state
-      totalSteadyTime: 0 // Time spent in steady state
+      totalSteadyTime: 0, // Time spent in steady state
+      currentSessionStart: Date.now(), // When current session started
+      sessionsCompleted: 0, // Number of sessions completed
+      avgSessionDuration: 0 // Average session duration
     },
     // Filter experimentation data with effectiveness scoring
     filterExperiments: {
@@ -114,6 +140,8 @@ let userPreferences = loadUserPreferences();
 export function resetUserPreferences() {
   // Log summary if there were experiments
   const { scores, tested, activeFilters } = userPreferences.filterExperiments;
+  const { totalSessionTime, totalFocusTime, totalEngagedTime, totalSteadyTime, sessionsCompleted, avgSessionDuration } = userPreferences.sessionData;
+  
   if (tested.length > 0 || Object.keys(scores).length > 0) {
     console.log(`Filter Experiment Summary (before reset):`);
     console.log(`  Total tested: ${tested.length}`);
@@ -129,12 +157,88 @@ export function resetUserPreferences() {
       }
     }
   }
+  
+  // Log session statistics
+  console.log(`\nSession Statistics:`);
+  console.log(`  Total session time: ${(totalSessionTime / 60).toFixed(1)} minutes`);
+  console.log(`  Total focus time: ${(totalFocusTime / 60).toFixed(1)} minutes`);
+  console.log(`  Focus percentage: ${totalSessionTime > 0 ? ((totalFocusTime / totalSessionTime) * 100).toFixed(1) : 0}%`);
+  console.log(`  Engaged time: ${(totalEngagedTime / 60).toFixed(1)} minutes`);
+  console.log(`  Steady time: ${(totalSteadyTime / 60).toFixed(1)} minutes`);
+  console.log(`  Sessions completed: ${sessionsCompleted}`);
+  if (sessionsCompleted > 0) {
+    console.log(`  Avg session duration: ${(avgSessionDuration / 60).toFixed(1)} minutes`);
+  }
+  
+  // Complete current session before reset
+  endCurrentSession();
+  
   // Clear storage and reset
   localStorage.removeItem(STORAGE_KEY); // Clear storage
   userPreferences = loadUserPreferences(); // Reset to defaults
   saveUserPreferences(userPreferences);
-  console.log(`User preferences reset to defaults`);
+  console.log(`\nUser preferences reset to defaults`);
   removeExperimentalFilters();
+  
+  // Reset session state
+  sessionState = {
+    startTime: Date.now(),
+    unfocusedDuration: 0,
+    focusedDuration: 0,
+    lastFocusCheck: Date.now(),
+    shouldEndSession: false,
+    unfocusedThreshold: 180000,
+    extendedFocusBonus: false
+  };
+}
+
+/**
+ * End current session and update session statistics
+ */
+function endCurrentSession() {
+  const sessionDuration = (Date.now() - userPreferences.sessionData.currentSessionStart) / 1000;
+  
+  if (sessionDuration > 60) { // Only count sessions longer than 1 minute
+    userPreferences.sessionData.sessionsCompleted += 1;
+    const totalSessions = userPreferences.sessionData.sessionsCompleted;
+    const prevAvg = userPreferences.sessionData.avgSessionDuration;
+    
+    // Update running average
+    userPreferences.sessionData.avgSessionDuration = 
+      ((prevAvg * (totalSessions - 1)) + sessionDuration) / totalSessions;
+    
+    console.log(`Session ended. Duration: ${(sessionDuration / 60).toFixed(1)} minutes`);
+  }
+  
+  // Start new session
+  userPreferences.sessionData.currentSessionStart = Date.now();
+  sessionState.startTime = Date.now();
+  sessionState.unfocusedDuration = 0;
+  sessionState.focusedDuration = 0;
+  sessionState.shouldEndSession = false;
+  sessionState.extendedFocusBonus = false;
+  sessionState.unfocusedThreshold = 180000;
+  
+  saveUserPreferences(userPreferences);
+}
+
+/**
+ * Get current session state for UI display
+ * @returns {Object} Session state information
+ */
+export function getSessionState() {
+  const sessionDuration = (Date.now() - sessionState.startTime) / 1000;
+  const focusDuration = sessionState.focusedDuration / 1000;
+  const unfocusDuration = sessionState.unfocusedDuration / 1000;
+  
+  return {
+    sessionDuration,
+    focusDuration,
+    unfocusDuration,
+    shouldEndSession: sessionState.shouldEndSession,
+    extendedFocusBonus: sessionState.extendedFocusBonus,
+    focusPercentage: sessionDuration > 0 ? (focusDuration / sessionDuration) * 100 : 0
+  };
 }
 
 export const initAudio = async () => {
@@ -307,19 +411,58 @@ export const useAudio = (thing, ambientState) => {
     lowShelfFilter.gain.setTargetAtTime(0, now, 0.2);
   }
 
-  // === Technique 2: Layer Crossfader ===
+  // === Technique 2: Layer Crossfader with Gradual Distance Modulation ===
+  // Update distance modulation (slightly erratic sine wave)
+  const timeSinceLastUpdate = now - distanceModulation.lastUpdate;
+  if (timeSinceLastUpdate > 0.1) { // Update every 100ms
+    distanceModulation.lastUpdate = now;
+    
+    // Add small random variation to frequency for erratic effect
+    if (Math.random() < 0.05) { // 5% chance to adjust erratic factor
+      distanceModulation.erraticFactor = (Math.random() - 0.5) * 0.02; // ±0.01 frequency variation
+    }
+    
+    const effectiveFreq = distanceModulation.baseFrequency + distanceModulation.erraticFactor;
+    distanceModulation.phase += effectiveFreq * timeSinceLastUpdate * 2 * Math.PI;
+    
+    // Keep phase in 0-2π range
+    if (distanceModulation.phase > 2 * Math.PI) {
+      distanceModulation.phase -= 2 * Math.PI;
+    }
+  }
+  
+  // Calculate distance modulation value (-1 to 1 sine wave)
+  const distanceWave = Math.sin(distanceModulation.phase);
+  
+  // Map sine wave to distance/energy parameters
+  // When wave is positive: sounds feel closer/more energetic
+  // When wave is negative: sounds feel farther/less energetic
+  const energyModulation = 0.5 + distanceWave * 0.15; // 0.35 to 0.65 range
+  
   if (isEngaged && !isMonotonous) {
-    // Crossfade to Near
-    nearGain.gain.setTargetAtTime(1.0, now, 0.5); // 1.5-3s crossfade
-    farGain.gain.setTargetAtTime(0.0, now, 0.5);
-    nearLpf.frequency.setTargetAtTime(5000, now, 0.5);
-    nearShelf.gain.setTargetAtTime(0.3, now, 0.5);
+    // Crossfade to Near with modulation
+    const nearLevel = 1.0 * energyModulation;
+    const farLevel = 0.0 + (1 - energyModulation) * 0.1; // Slight far layer for depth
+    
+    nearGain.gain.setTargetAtTime(nearLevel, now, 0.5); // 1.5-3s crossfade
+    farGain.gain.setTargetAtTime(farLevel, now, 0.5);
+    
+    // Modulate filter cutoffs based on distance wave
+    const nearCutoff = 5000 + distanceWave * 800; // 4200-5800 Hz
+    nearLpf.frequency.setTargetAtTime(nearCutoff, now, 0.5);
+    nearShelf.gain.setTargetAtTime(0.3 + distanceWave * 0.1, now, 0.5);
   } else {
-    // Crossfade to Far
-    nearGain.gain.setTargetAtTime(0.0, now, 0.5);
-    farGain.gain.setTargetAtTime(0.7, now, 0.5); // Slightly reduced volume
-    farLpf.frequency.setTargetAtTime(2000, now, 0.5);
-    farShelf.gain.setTargetAtTime(-0.5, now, 0.5);
+    // Crossfade to Far with modulation
+    const nearLevel = 0.0 + energyModulation * 0.1; // Slight near layer for presence
+    const farLevel = 0.7 * (1 - energyModulation * 0.3); // 0.49 to 0.7 range
+    
+    nearGain.gain.setTargetAtTime(nearLevel, now, 0.5);
+    farGain.gain.setTargetAtTime(farLevel, now, 0.5);
+    
+    // Modulate far layer filter
+    const farCutoff = 2000 + distanceWave * 300; // 1700-2300 Hz
+    farLpf.frequency.setTargetAtTime(farCutoff, now, 0.5);
+    farShelf.gain.setTargetAtTime(-0.5 + distanceWave * 0.15, now, 0.5);
   }
 
   // === Technique 3: Tremolo ===
@@ -354,12 +497,46 @@ function updatePersonalization(focusLevel, isEngaged, isSteady, isDrawing) {
   // Comprehensive time tracking for better personalization
   userPreferences.sessionData.totalSessionTime += 0.1; // Roughly 100ms intervals
 
+  // Track focus time (when focus level > 0.5)
+  if (focusLevel > 0.5) {
+    userPreferences.sessionData.totalFocusTime += 0.1;
+  }
+
   if (isEngaged) {
     userPreferences.sessionData.totalEngagedTime += 0.1;
   }
 
   if (isSteady) {
     userPreferences.sessionData.totalSteadyTime += 0.1;
+  }
+
+  // Session management: track focused/unfocused streaks
+  const now = Date.now();
+  const timeSinceLastCheck = now - sessionState.lastFocusCheck;
+  sessionState.lastFocusCheck = now;
+
+  // Consider user focused if engaged AND drawing with decent focus
+  const isCurrentlyFocused = isEngaged && isDrawing && focusLevel > 0.5;
+
+  if (isCurrentlyFocused) {
+    sessionState.focusedDuration += timeSinceLastCheck;
+    sessionState.unfocusedDuration = 0; // Reset unfocused streak
+
+    // Check if user has been doing exceptionally well (10+ minutes focused)
+    if (sessionState.focusedDuration > 600000 && !sessionState.extendedFocusBonus) {
+      sessionState.extendedFocusBonus = true;
+      sessionState.unfocusedThreshold = 240000; // Extend to 4 minutes for good performers
+      console.log(`🌟 Great focus! Session extended - you can take longer breaks.`);
+    }
+  } else {
+    sessionState.unfocusedDuration += timeSinceLastCheck;
+    sessionState.focusedDuration = Math.max(0, sessionState.focusedDuration - timeSinceLastCheck * 0.5); // Decay
+
+    // Check if user has been unfocused too long
+    if (sessionState.unfocusedDuration > sessionState.unfocusedThreshold) {
+      sessionState.shouldEndSession = true;
+      console.log(`⏸️ Unfocused for too long. Consider taking a break. Press 'R' to reset and start fresh.`);
+    }
   }
 
   // Update current experiment if active
