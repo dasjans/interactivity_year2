@@ -40,12 +40,27 @@ const settings = Object.freeze({
   // Engagement tuning (new)
   engagementGraceMs: 1000,    // remain engaged for this long after drawing stops
   engageRequireMs: 200,       // brief debounce before entering engagement from drawing
-  engageMinFocus: 0.18        // allow engagement when focusLevel >= this (with steadiness)
+  engageMinFocus: 0.18,        // allow engagement when focusLevel >= this (with steadiness)
+
+  // Drawing detection configuration (can be adjusted by user or auto-tuned)
+  drawingDetection: {
+    centerIndex: 19, // Primary peak index for drawing sounds
+    rangeSize: 2, // Number of indices on each side to check (18-20 default)
+    activityThreshold: 0.55, // Minimum activity level to detect drawing (while not drawing)
+    activityThresholdDrawing: 0.4, // More lenient when already drawing
+    autoAdjust: true, // Whether to auto-adjust based on user patterns
+    minIndex: 16, // Minimum allowed index
+    maxIndex: 23 // Maximum allowed index
+  }
 });
 // Internal state for engagement tracking
 let _lastDrawingTrue = 0;
 let _lastDrawingFalse = 0;
 let _engagedSince = 0;
+
+// Audio session control state
+let audioSessionActive = true; // Whether audio input/output is active
+let audioWasPausedByUser = false; // Track if user manually paused
 
 /** 
  * @typedef {Readonly<{
@@ -100,8 +115,10 @@ function use() {
   const { centroid: agitation, loudness, isEngaged, focusLevel, activityLevel, steadyCount, isDrawing } = state;
   // Visually update thing for testing
   Things.use(state.thing);
-  // Audio output handling
-  Things.useAudio(state.thing, state);
+  // Audio output handling (only if session is active)
+  if (audioSessionActive) {
+    Things.useAudio(state.thing, state);
+  }
 
   // Update status display
   const statusEl = document.getElementById(`status`);
@@ -118,15 +135,21 @@ function use() {
 
     // Get session state information
     const sessionState = Things.getSessionState();
-    const sessionText = `Session: ${(sessionState.sessionDuration / 60).toFixed(1)}m`;
-    const focusSessionText = sessionState.focusDuration > 10 ?
+    const sessionText = audioSessionActive ?
+      `Session: ${(sessionState.sessionDuration / 60).toFixed(1)}m` :
+      `🔇 Session paused`;
+    const focusSessionText = sessionState.focusDuration > 10 && audioSessionActive ?
       `Focused: ${(sessionState.focusDuration / 60).toFixed(1)}m` :
       ``;
-    const sessionWarning = sessionState.shouldEndSession ?
+    const sessionWarning = sessionState.shouldEndSession && audioSessionActive ?
       `⚠️ Time for a break` :
-      sessionState.extendedFocusBonus ?
+      sessionState.extendedFocusBonus && audioSessionActive ?
         `🌟 Extended session` :
         ``;
+
+    // Drawing detection config info
+    const drawCfg = settings.drawingDetection;
+    const configText = `Draw detect: idx ${drawCfg.centerIndex}±${drawCfg.rangeSize} (${drawCfg.activityThreshold.toFixed(2)})`;
 
     statusEl.innerHTML = `
       <div>${engagementText}</div>
@@ -135,9 +158,13 @@ function use() {
       ${steadyText ? `<div>${steadyText}</div>` : ``}
       ${drawingText ? `<div style="color: #90ee90;">${drawingText}</div>` : ``}
       ${filterText ? `<div style="color: #ffd700;">${filterText}</div>` : ``}
-      <div style="color: #87ceeb;">${sessionText}</div>
+      <div style="color: ${audioSessionActive ? `#87ceeb` : `#ff6b6b`};">${sessionText}</div>
       ${focusSessionText ? `<div style="color: #98fb98;">${focusSessionText}</div>` : ``}
       ${sessionWarning ? `<div style="color: ${sessionState.shouldEndSession ? `#ff6b6b` : `#ffd700`};">${sessionWarning}</div>` : ``}
+      <div style="color: #dda0dd; font-size: 0.9em;">${configText}</div>
+      <div style="color: #999; font-size: 0.85em; margin-top: 8px;">
+        Keys: E=end, S=start, R=reset
+      </div>
     `;
   }
 }
@@ -283,6 +310,13 @@ function update() {
     centroidBaseline,
     steadyCount
   });
+
+  // Check if session should end and stop audio if needed
+  const sessionState = Things.getSessionState();
+  if (sessionState.shouldEndSession && audioSessionActive && !audioWasPausedByUser) {
+    console.log(`⏸️ Session ended due to prolonged inactivity. Stopping audio...`);
+    stopAudioSession();
+  }
 }
 
 /**
@@ -366,37 +400,44 @@ let lastLoudnessCheck = 0;
  */
 function detectDrawing(loudness) {
   const { isDrawing } = state;
-  //console.log(`checking if drawing`);
+  const { drawingDetection } = settings;
+  
   // Need at least 24 loudness values
   if (!loudness || loudness.length < 24) return false;
 
-  // Extract the relevant indices (16-23)
-  const idx16 = loudness[16] || 0;
-  const idx17 = loudness[17] || 0;
-  const idx18 = loudness[18] || 0;
-  const idx19 = loudness[19] || 0;
-  const idx20 = loudness[20] || 0;
-  const idx21 = loudness[21] || 0;
-  const idx22 = loudness[22] || 0;
-  const idx23 = loudness[23] || 0;
-
-  // Check if there's sufficient activity in the typical range 18-20
-  const avgActivity = ((idx18 * 2) + (idx19 * 1) + (idx20 * 2)) / 5;
-  // Check if there is potentially low or high frequency activity instead
-  const lowFreqActivity = (idx16 + idx17) / 2;
-  const highFreqActivity = (idx21 + idx22 + idx23) / 3;
-  //console.log(`Average activity: ${avgActivity} (at idx18: ${idx18}, idx19: ${idx19}, idx20: ${idx20})`);
-  // if already drawing, be more lenient
-  if (isDrawing) {
-    if (avgActivity < 0.4/*  || ((lowFreqActivity | highFreqActivity) < 0.7) */) return false; // Too quiet to be drawing
-  } else {
-    if (avgActivity < 0.55 /* || ((lowFreqActivity | highFreqActivity) < 0.75) */) return false; // Too quiet to be drawing
+  const centerIdx = drawingDetection.centerIndex;
+  const rangeSize = drawingDetection.rangeSize;
+  
+  // Extract indices dynamically based on configuration
+  const values = [];
+  for (let i = Math.max(drawingDetection.minIndex, centerIdx - rangeSize - 1); 
+       i <= Math.min(drawingDetection.maxIndex, centerIdx + rangeSize + 1); 
+       i++) {
+    values.push(loudness[i] || 0);
   }
-  // Check for bell curve pattern: idx19 should be highest or near-highest
-  // Being lenient as other sounds may interfere
-  //const isPeakAt19 = idx19 >= idx18 * 0.88 && idx19 >= idx20 * 0.88;
 
-  // Drawing is likely if we have a peak at 19
+  // Calculate average activity in the center range
+  let avgActivity = 0;
+  let count = 0;
+  for (let i = centerIdx - rangeSize; i <= centerIdx + rangeSize; i++) {
+    avgActivity += loudness[i] || 0;
+    count++;
+  }
+  avgActivity /= count;
+
+  // Use appropriate threshold based on current drawing state
+  const threshold = isDrawing ? 
+    drawingDetection.activityThresholdDrawing : 
+    drawingDetection.activityThreshold;
+  
+  if (avgActivity < threshold) return false; // Too quiet to be drawing
+
+  // Auto-adjustment: learn from successful drawing patterns
+  if (drawingDetection.autoAdjust && isDrawing && avgActivity > 0.6) {
+    // Track successful drawing activity levels for potential auto-adjustment
+    // This could be expanded to actually adjust thresholds over time
+  }
+
   return true;
 }
 
@@ -411,6 +452,126 @@ function calculateVariance(arr) {
   const variance = arr.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / arr.length;
   return variance;
 }
+
+/**
+ * Stop audio input and output
+ */
+function stopAudioSession() {
+  audioSessionActive = false;
+  audioWasPausedByUser = true;
+  
+  // Pause Meyda analysis
+  const { meyda } = settings;
+  if (meyda) {
+    meyda.paused = true;
+  }
+  
+  // Stop audio output
+  Things.stopAudio();
+  
+  console.log(`🔇 Audio session stopped. Press 'S' to start a new session.`);
+}
+
+/**
+ * Start/restart audio session
+ */
+async function startAudioSession() {
+  audioSessionActive = true;
+  audioWasPausedByUser = false;
+  
+  // Resume Meyda analysis
+  const { meyda } = settings;
+  if (meyda) {
+    meyda.paused = false;
+  }
+  
+  // Restart audio output
+  await Things.initAudio();
+  const ctx = Things.getAudioCtx();
+  if (ctx && ctx.state !== 'running') {
+    await ctx.resume();
+  }
+  
+  // Start a fresh session in thing.js
+  Things.startNewSession();
+  
+  console.log(`🔊 Audio session started. Session timer reset.`);
+}
+
+/**
+ * Adjust drawing detection parameters
+ * @param {Object} params - Parameters to adjust {centerIndex, rangeSize, activityThreshold, etc.}
+ */
+function adjustDrawingDetection(params) {
+  const current = settings.drawingDetection;
+  
+  if (params.centerIndex !== undefined) {
+    const newCenter = Math.max(current.minIndex, Math.min(current.maxIndex, params.centerIndex));
+    settings.drawingDetection.centerIndex = newCenter;
+    console.log(`Drawing detection center index adjusted to: ${newCenter}`);
+  }
+  
+  if (params.rangeSize !== undefined) {
+    settings.drawingDetection.rangeSize = Math.max(1, Math.min(4, params.rangeSize));
+    console.log(`Drawing detection range size adjusted to: ±${settings.drawingDetection.rangeSize}`);
+  }
+  
+  if (params.activityThreshold !== undefined) {
+    settings.drawingDetection.activityThreshold = Math.max(0.1, Math.min(1.0, params.activityThreshold));
+    console.log(`Drawing detection threshold adjusted to: ${settings.drawingDetection.activityThreshold}`);
+  }
+  
+  if (params.autoAdjust !== undefined) {
+    settings.drawingDetection.autoAdjust = params.autoAdjust;
+    console.log(`Drawing detection auto-adjust: ${params.autoAdjust ? 'enabled' : 'disabled'}`);
+  }
+  
+  // Display current configuration
+  console.log(`Current drawing detection config:`, {
+    centerIndex: settings.drawingDetection.centerIndex,
+    range: `${settings.drawingDetection.centerIndex - settings.drawingDetection.rangeSize}-${settings.drawingDetection.centerIndex + settings.drawingDetection.rangeSize}`,
+    threshold: settings.drawingDetection.activityThreshold,
+    autoAdjust: settings.drawingDetection.autoAdjust
+  });
+}
+
+/**
+ * Show help for keyboard commands and drawing detection adjustment
+ */
+function showHelp() {
+  console.log(`
+🎛️ Focus Audio System - Controls
+═══════════════════════════════
+
+Keyboard Commands:
+  E - End/pause audio session
+  S - Start new audio session  
+  R - Reset user preferences and session
+
+Drawing Detection Adjustment:
+  adjustDrawingDetection({ centerIndex: 19 })     // Change center frequency index (16-23)
+  adjustDrawingDetection({ rangeSize: 2 })        // Change range size (1-4)
+  adjustDrawingDetection({ activityThreshold: 0.5 }) // Change sensitivity (0.1-1.0)
+  adjustDrawingDetection({ autoAdjust: true })    // Enable/disable auto-tuning
+
+Examples:
+  adjustDrawingDetection({ centerIndex: 18, rangeSize: 3 })  // Wider range, lower freq
+  adjustDrawingDetection({ activityThreshold: 0.4 })          // More sensitive
+
+Current Config:
+  Center Index: ${settings.drawingDetection.centerIndex}
+  Range: ${settings.drawingDetection.centerIndex - settings.drawingDetection.rangeSize}-${settings.drawingDetection.centerIndex + settings.drawingDetection.rangeSize}
+  Threshold: ${settings.drawingDetection.activityThreshold}
+  Auto-adjust: ${settings.drawingDetection.autoAdjust}
+  `);
+}
+
+// Export for external access
+window.adjustDrawingDetection = adjustDrawingDetection;
+window.showHelp = showHelp;
+
+// Show help on load
+console.log(`💡 Type 'showHelp()' in console for controls and drawing detection adjustment`);
 
 function setup() {
   const { meyda } = settings;
@@ -436,10 +597,16 @@ function setup() {
   continuously(() => {
     use();
   }, settings.sketchUseSpeedMs).start();
-  // Add reset button handler for user preferences
+  // Add reset button handler for user preferences and key commands
   window.addEventListener(`keydown`, (event) => {
     if (event.key === `r` || event.key === `R`) {
       Things.resetUserPreferences();
+    } else if (event.key === `e` || event.key === `E`) {
+      // Stop audio session
+      stopAudioSession();
+    } else if (event.key === `s` || event.key === `S`) {
+      // Start new audio session
+      startAudioSession();
     }
   });
   // Resume audio context on user gesture

@@ -354,6 +354,53 @@ export const initAudio = async () => {
 
 export const getAudioCtx = () => audioCtx;
 
+/**
+ * Stop all audio playback
+ */
+export const stopAudio = () => {
+  if (!audioCtx) return;
+  
+  // Stop all source nodes
+  if (ambienceSource) {
+    try {
+      ambienceSource.stop();
+    } catch (e) {
+      // Already stopped
+    }
+  }
+  if (nearSource) {
+    try {
+      nearSource.stop();
+    } catch (e) {
+      // Already stopped
+    }
+  }
+  if (farSource) {
+    try {
+      farSource.stop();
+    } catch (e) {
+      // Already stopped
+    }
+  }
+  
+  console.log(`Audio playback stopped`);
+};
+
+/**
+ * Start a new session (resets session state and restarts audio if needed)
+ */
+export const startNewSession = async () => {
+  // End current session and reset
+  endCurrentSession();
+  
+  // Reinitialize audio if needed
+  if (audioCtx) {
+    await initAudio();
+  }
+  
+  console.log(`New session started`);
+};
+
 let warnCount;
 
 /**
