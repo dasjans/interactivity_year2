@@ -41,7 +41,7 @@ let sessionState = {
   focusedDuration: 0, // Time spent focused in current streak
   lastFocusCheck: Date.now(),
   shouldEndSession: false,
-  unfocusedThreshold: 180000, // 3 minutes of unfocused time ends session
+  unfocusedThreshold: 30000, // 30 seconds of unfocused time ends session
   extendedFocusBonus: false // Whether we've extended the session due to good performance
 };
 
@@ -187,7 +187,7 @@ export function resetUserPreferences() {
     focusedDuration: 0,
     lastFocusCheck: Date.now(),
     shouldEndSession: false,
-    unfocusedThreshold: 180000,
+    unfocusedThreshold: 30000,
     extendedFocusBonus: false
   };
 }
@@ -572,7 +572,7 @@ function updatePersonalization(focusLevel, isEngaged, isSteady, isDrawing) {
     // Check if user has been doing exceptionally well (10+ minutes focused)
     if (sessionState.focusedDuration > 600000 && !sessionState.extendedFocusBonus) {
       sessionState.extendedFocusBonus = true;
-      sessionState.unfocusedThreshold = 240000; // Extend to 4 minutes for good performers
+      sessionState.unfocusedThreshold += 30000; // add 30 seconds to unfocused threshold permanently
       console.log(`🌟 Great focus! Session extended - you can take longer breaks.`);
     }
   } else {

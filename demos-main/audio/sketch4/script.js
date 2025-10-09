@@ -40,22 +40,21 @@ const settings = Object.freeze({
   // Engagement tuning (new)
   engagementGraceMs: 1000,    // remain engaged for this long after drawing stops
   engageRequireMs: 200,       // brief debounce before entering engagement from drawing
-  engageMinFocus: 0.18        // allow engagement when focusLevel >= this (with steadiness)
+  engageMinFocus: 0.18,       // allow engagement when focusLevel >= this (with steadiness)
+  // drawingDetection: see below
+  drawingDetection: {
+    centerIndex: 19, // Primary peak index for drawing sounds
+    rangeSize: 2, // Number of indices on each side to check (18-20 default)
+    activityThreshold: 0.55, // Minimum activity level to detect drawing (while not drawing)
+    activityThresholdDrawing: 0.4, // More lenient when already drawing
+    autoAdjust: true, // Whether to auto-adjust based on user patterns
+    minIndex: 16, // Minimum allowed index
+    maxIndex: 23 // Maximum allowed index
+  },
+
 });
 
-// Drawing detection configuration (mutable, can be adjusted by user or auto-tuned)
-const drawingDetectionConfig = {
-  centerIndex: 19, // Primary peak index for drawing sounds
-  rangeSize: 2, // Number of indices on each side to check (18-20 default)
-  activityThreshold: 0.55, // Minimum activity level to detect drawing (while not drawing)
-  activityThresholdDrawing: 0.4, // More lenient when already drawing
-  autoAdjust: true, // Whether to auto-adjust based on user patterns
-  minIndex: 16, // Minimum allowed index
-  maxIndex: 23 // Maximum allowed index
-};
 
-// Add to settings for backward compatibility
-settings.drawingDetection = drawingDetectionConfig;
 // Internal state for engagement tracking
 let _lastDrawingTrue = 0;
 let _lastDrawingFalse = 0;
@@ -535,44 +534,6 @@ function adjustDrawingDetection(params) {
   });
 }
 
-/**
- * Show help for keyboard commands and drawing detection adjustment
- */
-function showHelp() {
-  console.log(`
-🎛️ Focus Audio System - Controls
-═══════════════════════════════
-
-Keyboard Commands:
-  E - End/pause audio session
-  S - Start new audio session  
-  R - Reset user preferences and session
-
-Drawing Detection Adjustment:
-  adjustDrawingDetection({ centerIndex: 19 })     // Change center frequency index (16-23)
-  adjustDrawingDetection({ rangeSize: 2 })        // Change range size (1-4)
-  adjustDrawingDetection({ activityThreshold: 0.5 }) // Change sensitivity (0.1-1.0)
-  adjustDrawingDetection({ autoAdjust: true })    // Enable/disable auto-tuning
-
-Examples:
-  adjustDrawingDetection({ centerIndex: 18, rangeSize: 3 })  // Wider range, lower freq
-  adjustDrawingDetection({ activityThreshold: 0.4 })          // More sensitive
-
-Current Config:
-  Center Index: ${settings.drawingDetection.centerIndex}
-  Range: ${settings.drawingDetection.centerIndex - settings.drawingDetection.rangeSize}-${settings.drawingDetection.centerIndex + settings.drawingDetection.rangeSize}
-  Threshold: ${settings.drawingDetection.activityThreshold}
-  Auto-adjust: ${settings.drawingDetection.autoAdjust}
-  `);
-}
-
-// Export for external access
-window.adjustDrawingDetection = adjustDrawingDetection;
-window.showHelp = showHelp;
-
-// Show help on load
-console.log(`💡 Type 'showHelp()' in console for controls and drawing detection adjustment`);
-
 function setup() {
   const { meyda } = settings;
 
@@ -597,10 +558,10 @@ function setup() {
   continuously(() => {
     use();
   }, settings.sketchUseSpeedMs).start();
-  
+
   // Setup UI controls
   setupUIControls();
-  
+
   // Add reset button handler for user preferences and key commands
   window.addEventListener(`keydown`, (event) => {
     if (event.key === `r` || event.key === `R`) {
@@ -626,68 +587,69 @@ function setup() {
  * Setup UI control elements and their event listeners
  */
 function setupUIControls() {
+  const { drawingDetection } = settings;
   // Center Index slider
   const centerIndexInput = document.getElementById(`centerIndex`);
   const centerIndexValue = document.getElementById(`centerIndexValue`);
   if (centerIndexInput && centerIndexValue) {
-    centerIndexInput.value = drawingDetectionConfig.centerIndex;
-    centerIndexValue.textContent = drawingDetectionConfig.centerIndex;
+    centerIndexInput.value = drawingDetection.centerIndex;
+    centerIndexValue.textContent = drawingDetection.centerIndex;
     centerIndexInput.addEventListener(`input`, (e) => {
       const value = parseInt(e.target.value);
-      drawingDetectionConfig.centerIndex = value;
+      drawingDetection.centerIndex = value;
       centerIndexValue.textContent = value;
       console.log(`Drawing detection centerIndex updated to ${value}`);
     });
   }
-  
+
   // Range Size slider
   const rangeSizeInput = document.getElementById(`rangeSize`);
   const rangeSizeValue = document.getElementById(`rangeSizeValue`);
   if (rangeSizeInput && rangeSizeValue) {
-    rangeSizeInput.value = drawingDetectionConfig.rangeSize;
-    rangeSizeValue.textContent = drawingDetectionConfig.rangeSize;
+    rangeSizeInput.value = drawingDetection.rangeSize;
+    rangeSizeValue.textContent = drawingDetection.rangeSize;
     rangeSizeInput.addEventListener(`input`, (e) => {
       const value = parseInt(e.target.value);
-      drawingDetectionConfig.rangeSize = value;
+      drawingDetection.rangeSize = value;
       rangeSizeValue.textContent = value;
       console.log(`Drawing detection rangeSize updated to ${value}`);
     });
   }
-  
+
   // Activity Threshold slider
   const activityThresholdInput = document.getElementById(`activityThreshold`);
   const activityThresholdValue = document.getElementById(`activityThresholdValue`);
   if (activityThresholdInput && activityThresholdValue) {
-    activityThresholdInput.value = drawingDetectionConfig.activityThreshold;
-    activityThresholdValue.textContent = drawingDetectionConfig.activityThreshold.toFixed(2);
+    activityThresholdInput.value = drawingDetection.activityThreshold;
+    activityThresholdValue.textContent = drawingDetection.activityThreshold.toFixed(2);
     activityThresholdInput.addEventListener(`input`, (e) => {
       const value = parseFloat(e.target.value);
-      drawingDetectionConfig.activityThreshold = value;
+      drawingDetection.activityThreshold = value;
       activityThresholdValue.textContent = value.toFixed(2);
       console.log(`Drawing detection activityThreshold updated to ${value.toFixed(2)}`);
     });
   }
-  
+
   // Activity Threshold Drawing slider
   const activityThresholdDrawingInput = document.getElementById(`activityThresholdDrawing`);
   const activityThresholdDrawingValue = document.getElementById(`activityThresholdDrawingValue`);
   if (activityThresholdDrawingInput && activityThresholdDrawingValue) {
-    activityThresholdDrawingInput.value = drawingDetectionConfig.activityThresholdDrawing;
-    activityThresholdDrawingValue.textContent = drawingDetectionConfig.activityThresholdDrawing.toFixed(2);
+    activityThresholdDrawingInput.value = drawingDetection.activityThresholdDrawing;
+    activityThresholdDrawingValue.textContent = drawingDetection.activityThresholdDrawing.toFixed(2);
     activityThresholdDrawingInput.addEventListener(`input`, (e) => {
       const value = parseFloat(e.target.value);
-      drawingDetectionConfig.activityThresholdDrawing = value;
+      drawingDetection.activityThresholdDrawing = value;
       activityThresholdDrawingValue.textContent = value.toFixed(2);
       console.log(`Drawing detection activityThresholdDrawing updated to ${value.toFixed(2)}`);
     });
   }
-  
+
   // Auto Adjust checkbox
   const autoAdjustInput = document.getElementById(`autoAdjust`);
   if (autoAdjustInput) {
-    autoAdjustInput.checked = drawingDetectionConfig.autoAdjust;
+    autoAdjustInput.checked = drawingDetection.autoAdjust;
     autoAdjustInput.addEventListener(`change`, (e) => {
-      drawingDetectionConfig.autoAdjust = e.target.checked;
+      drawingDetection.autoAdjust = e.target.checked;
       console.log(`Drawing detection autoAdjust updated to ${e.target.checked}`);
     });
   }
@@ -709,20 +671,20 @@ function toggleUIVisibility() {
  */
 async function startAudioOnUserGesture() {
   console.log(`Spacebar pressed. Starting audio context.`);
-  
+
   await Things.initAudio();
   const ctx = Things.getAudioCtx();
-  
+
   if (ctx) {
     await ctx.resume();
     console.log(`AudioContext state after resume:`, ctx.state);
-    
+
     // Update status to show audio is ready
     const statusEl = document.getElementById(`status`);
-    if (statusEl && ctx.state === 'running') {
-      const statusItem = statusEl.querySelector('.status-item');
+    if (statusEl && ctx.state === `running`) {
+      const statusItem = statusEl.querySelector(`.status-item`);
       if (statusItem) {
-        statusItem.textContent = 'Audio active - monitoring focus...';
+        statusItem.textContent = `Audio active - monitoring focus...`;
       }
     }
   }
