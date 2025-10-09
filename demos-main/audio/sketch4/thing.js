@@ -53,8 +53,19 @@ function loadUserPreferences() {
           tested: [],
           positive: [],
           negative: [],
-          currentExperiment: null
+          currentExperiment: null,
+          scores: {},
+          activeFilters: [],
+          lastRetestTime: 0
         };
+      } else {
+        // Ensure new fields exist in filterExperiments
+        if (!loaded.filterExperiments.scores) loaded.filterExperiments.scores = {};
+        if (!loaded.filterExperiments.activeFilters) loaded.filterExperiments.activeFilters = [];
+        if (!loaded.filterExperiments.lastRetestTime) loaded.filterExperiments.lastRetestTime = 0;
+        // Keep positive/negative for backward compatibility
+        if (!loaded.filterExperiments.positive) loaded.filterExperiments.positive = [];
+        if (!loaded.filterExperiments.negative) loaded.filterExperiments.negative = [];
       }
 
       return loaded;
@@ -74,12 +85,15 @@ function loadUserPreferences() {
       totalEngagedTime: 0, // Time spent in engaged state
       totalSteadyTime: 0 // Time spent in steady state
     },
-    // Filter experimentation data
+    // Filter experimentation data with effectiveness scoring
     filterExperiments: {
       tested: [], // Array of tested filter configurations
-      positive: [], // Filters that correlated with better focus
-      negative: [], // Filters that correlated with worse focus
-      currentExperiment: null // Active experiment or null
+      positive: [], // DEPRECATED - kept for backward compatibility
+      negative: [], // DEPRECATED - kept for backward compatibility
+      currentExperiment: null, // Active experiment or null
+      scores: {}, // Map of filter name -> effectiveness score (-10 to +10 per test, cumulative up to 200)
+      activeFilters: [], // Filters currently applied permanently (high positive scores)
+      lastRetestTime: 0 // Timestamp of last retest
     }
   };
 }
@@ -99,14 +113,20 @@ let userPreferences = loadUserPreferences();
 
 export function resetUserPreferences() {
   // Log summary if there were experiments
-  const { positive, negative, tested } = userPreferences.filterExperiments;
-  if (tested.length > 0) {
+  const { scores, tested, activeFilters } = userPreferences.filterExperiments;
+  if (tested.length > 0 || Object.keys(scores).length > 0) {
     console.log(`Filter Experiment Summary (before reset):`);
     console.log(`  Total tested: ${tested.length}`);
-    console.log(`  Positive results: ${positive.length}`);
-    console.log(`  Negative results: ${negative.length}`);
-    if (positive.length > 0) {
-      console.log(`  Best filters:`, positive.map(p => `${p.filters.map(f => f.name).join(`+`)} (focus: ${p.avgFocusLevel.toFixed(2)})`).join(`, `));
+    console.log(`  Active filters: ${activeFilters.length}`);
+    
+    // Show scores
+    const scoreEntries = Object.entries(scores).sort((a, b) => b[1] - a[1]); // Sort by score descending
+    if (scoreEntries.length > 0) {
+      console.log(`  Filter effectiveness scores:`);
+      for (const [filterName, score] of scoreEntries) {
+        const status = score >= 50 ? '✓ ACTIVE' : score > 20 ? '+ positive' : score < -20 ? '- negative' : '○ neutral';
+        console.log(`    ${filterName}: ${score} (${status})`);
+      }
     }
   }
   // Clear storage and reset
@@ -264,7 +284,7 @@ export const useAudio = (thing, ambientState) => {
   }
 
   const { rms, centroid, rmsBaseline, centroidBaseline, isEngaged,
-    isMonotonous, steadyCount, focusLevel, isSteady } = ambientState;
+    isMonotonous, steadyCount, focusLevel, isSteady, isDrawing } = ambientState;
 
   const now = audioCtx.currentTime;
   const tau = 0.15; // Threshold multiplier
@@ -319,7 +339,7 @@ export const useAudio = (thing, ambientState) => {
   tremoloOscillator.frequency.setValueAtTime(currentBpm / 60, now);
 
   // Personalization: track session metrics
-  updatePersonalization(focusLevel, isEngaged, isSteady);
+  updatePersonalization(focusLevel, isEngaged, isSteady, isDrawing);
 
   // Manage filter experimentation (called periodically, has internal logic)
   if (Math.random() < 0.01) { // 1% chance per call = check every ~10 seconds
@@ -330,7 +350,7 @@ export const useAudio = (thing, ambientState) => {
 /**
  * Update personalization based on user behavior
  */
-function updatePersonalization(focusLevel, isEngaged, isSteady) {
+function updatePersonalization(focusLevel, isEngaged, isSteady, isDrawing) {
   // Comprehensive time tracking for better personalization
   userPreferences.sessionData.totalSessionTime += 0.1; // Roughly 100ms intervals
 
@@ -350,6 +370,14 @@ function updatePersonalization(focusLevel, isEngaged, isSteady) {
 
     if (isEngaged) {
       experiment.engagedTime += 0.1;
+    }
+
+    if (isDrawing) {
+      experiment.drawingTime += 0.1;
+    }
+
+    if (isSteady) {
+      experiment.steadyTime += 0.1;
     }
   }
 
@@ -467,7 +495,9 @@ function startFilterExperiment() {
     startTime: Date.now(),
     duration: 0,
     focusTimeAccumulator: 0,
-    engagedTime: 0
+    engagedTime: 0,
+    drawingTime: 0, // Time spent drawing during experiment
+    steadyTime: 0 // Time spent in steady state during experiment
   };
 
   applyExperimentalFilters(filtersToTest);
@@ -475,7 +505,7 @@ function startFilterExperiment() {
 }
 
 /**
- * End current filter experiment and evaluate results
+ * End current filter experiment and evaluate results with effectiveness scoring
  */
 function endFilterExperiment() {
   const experiment = userPreferences.filterExperiments.currentExperiment;
@@ -484,33 +514,94 @@ function endFilterExperiment() {
   // Calculate metrics
   const avgFocusLevel = experiment.focusTimeAccumulator / experiment.duration;
   const engagementRatio = experiment.engagedTime / experiment.duration;
+  const drawingRatio = experiment.drawingTime / experiment.duration;
+  const steadyRatio = experiment.steadyTime / experiment.duration;
 
-  // Determine if this filter helped or hurt
-  // Threshold: avg focus > 0.6 and engagement > 0.5 = positive
-  const isPositive = avgFocusLevel > 0.6 && engagementRatio > 0.5;
+  // Calculate effectiveness score (-10 to +10)
+  // Based on user's state during the experiment
+  let effectivenessScore = 0;
+
+  // If user was actively drawing and focused
+  if (drawingRatio > 0.3 && engagementRatio > 0.3) {
+    // User was active - score based on focus improvement
+    if (avgFocusLevel > 0.7 && steadyRatio > 0.5) {
+      // High focus and steady - very positive (+8 to +10)
+      effectivenessScore = 8 + Math.round((avgFocusLevel - 0.7) * 6.67); // Scale 0.7-1.0 to 8-10
+    } else if (avgFocusLevel > 0.5) {
+      // Moderate focus - moderately positive (+3 to +7)
+      effectivenessScore = 3 + Math.round((avgFocusLevel - 0.5) * 20); // Scale 0.5-0.7 to 3-7
+    } else if (avgFocusLevel < 0.4) {
+      // Low focus despite activity - negative (-10 to -3)
+      effectivenessScore = -10 + Math.round((avgFocusLevel - 0.2) * 35); // Scale 0.2-0.4 to -10 to -3
+    } else {
+      // Neutral to slightly positive (0 to +2)
+      effectivenessScore = Math.round((avgFocusLevel - 0.4) * 20); // Scale 0.4-0.5 to 0-2
+    }
+  } else if (drawingRatio < 0.1 && engagementRatio < 0.2) {
+    // User was not active - neutral result (can't determine filter effect)
+    effectivenessScore = 0;
+  } else {
+    // Mixed activity - small score based on engagement
+    if (engagementRatio > 0.5) {
+      effectivenessScore = 2;
+    } else {
+      effectivenessScore = -1;
+    }
+  }
+
+  // Clamp to range
+  effectivenessScore = clamp(effectivenessScore, -10, 10);
+
+  // Update scores for each filter tested
+  for (const filter of experiment.filters) {
+    const filterName = filter.name;
+    if (!userPreferences.filterExperiments.scores[filterName]) {
+      userPreferences.filterExperiments.scores[filterName] = 0;
+    }
+    
+    // Add to cumulative score (cap at ±200)
+    userPreferences.filterExperiments.scores[filterName] = clamp(
+      userPreferences.filterExperiments.scores[filterName] + effectivenessScore,
+      -200,
+      200
+    );
+
+    // Track in tested array if not already there
+    if (!userPreferences.filterExperiments.tested.find(t => t.name === filterName)) {
+      userPreferences.filterExperiments.tested.push(filter);
+    }
+  }
 
   const result = {
     filters: experiment.filters,
     avgFocusLevel,
     engagementRatio,
+    drawingRatio,
+    steadyRatio,
+    effectivenessScore,
     duration: experiment.duration,
     timestamp: experiment.startTime
   };
 
-  // Store result
-  for (const filter of experiment.filters) {
-    if (!userPreferences.filterExperiments.tested.find(t => t.name === filter.name)) {
-      userPreferences.filterExperiments.tested.push(filter);
-    }
+  // Log result
+  const filterNames = result.filters.map(f => f.name).join(` + `);
+  const scoreDisplay = effectivenessScore > 0 ? `+${effectivenessScore}` : effectivenessScore;
+  const totalScores = result.filters.map(f => `${f.name}: ${userPreferences.filterExperiments.scores[f.name]}`).join(`, `);
+  
+  if (effectivenessScore > 5) {
+    console.log(`✓✓ Filter experiment strongly positive: ${filterNames} (score: ${scoreDisplay}) [${totalScores}]`);
+  } else if (effectivenessScore > 0) {
+    console.log(`✓ Filter experiment positive: ${filterNames} (score: ${scoreDisplay}) [${totalScores}]`);
+  } else if (effectivenessScore < -5) {
+    console.log(`✗✗ Filter experiment strongly negative: ${filterNames} (score: ${scoreDisplay}) [${totalScores}]`);
+  } else if (effectivenessScore < 0) {
+    console.log(`✗ Filter experiment negative: ${filterNames} (score: ${scoreDisplay}) [${totalScores}]`);
+  } else {
+    console.log(`○ Filter experiment neutral: ${filterNames} (score: ${scoreDisplay}) [${totalScores}]`);
   }
 
-  if (isPositive) {
-    userPreferences.filterExperiments.positive.push(result);
-    console.log(`✓ Filter experiment positive:`, result.filters.map(f => f.name).join(` + `), `(focus: ${avgFocusLevel.toFixed(2)}, engagement: ${engagementRatio.toFixed(2)})`);
-  } else {
-    userPreferences.filterExperiments.negative.push(result);
-    console.log(`✗ Filter experiment negative:`, result.filters.map(f => f.name).join(` + `), `(focus: ${avgFocusLevel.toFixed(2)}, engagement: ${engagementRatio.toFixed(2)})`);
-  }
+  // Update active filters based on scores
+  updateActiveFilters();
 
   // Clean up
   removeExperimentalFilters();
@@ -519,11 +610,35 @@ function endFilterExperiment() {
 }
 
 /**
+ * Update which filters are actively applied based on effectiveness scores
+ */
+function updateActiveFilters() {
+  const scores = userPreferences.filterExperiments.scores;
+  const newActiveFilters = [];
+
+  // Apply filters with high positive scores (>= 50)
+  for (const filterName in scores) {
+    if (scores[filterName] >= 50) {
+      const filterConfig = filterCandidates.find(f => f.name === filterName);
+      if (filterConfig) {
+        newActiveFilters.push(filterConfig);
+      }
+    }
+  }
+
+  userPreferences.filterExperiments.activeFilters = newActiveFilters;
+  
+  if (newActiveFilters.length > 0) {
+    console.log(`Active filters updated:`, newActiveFilters.map(f => `${f.name} (${scores[f.name]})`).join(`, `));
+  }
+}
+
+/**
  * Manage filter experimentation cycle
- * Called periodically to start/stop experiments
+ * Called periodically to start/stop experiments and handle retesting
  */
 function manageFilterExperiments() {
-  const { currentExperiment } = userPreferences.filterExperiments;
+  const { currentExperiment, lastRetestTime, scores } = userPreferences.filterExperiments;
 
   if (currentExperiment) {
     // Check if experiment should end (20-30 seconds duration)
@@ -532,10 +647,55 @@ function manageFilterExperiments() {
       endFilterExperiment();
     }
   } else {
-    // Maybe start new experiment (20% chance when called)
-    if (Math.random() < 0.2) {
+    const now = Date.now();
+    
+    // Check if it's time for a retest (approximately every 2 minutes = 120000ms)
+    const timeSinceLastRetest = now - lastRetestTime;
+    const shouldRetest = timeSinceLastRetest > 120000 && Object.keys(scores).length > 0;
+
+    if (shouldRetest && Math.random() < 0.3) {
+      // Retest a random filter that has been tested before
+      const testedFilters = Object.keys(scores);
+      const filterNameToRetest = testedFilters[Math.floor(Math.random() * testedFilters.length)];
+      const filterToRetest = filterCandidates.find(f => f.name === filterNameToRetest);
+      
+      if (filterToRetest) {
+        userPreferences.filterExperiments.currentExperiment = {
+          filters: [filterToRetest],
+          startTime: now,
+          duration: 0,
+          focusTimeAccumulator: 0,
+          engagedTime: 0,
+          drawingTime: 0,
+          steadyTime: 0,
+          isRetest: true
+        };
+        
+        applyExperimentalFilters([filterToRetest]);
+        userPreferences.filterExperiments.lastRetestTime = now;
+        console.log(`🔄 Retesting filter:`, filterToRetest.name, `(current score: ${scores[filterNameToRetest]})`);
+      }
+    } else if (!shouldRetest && Math.random() < 0.2) {
+      // Normal new experiment (20% chance when called)
       startFilterExperiment();
     }
+  }
+
+  // Apply active filters if not currently experimenting
+  if (!currentExperiment) {
+    applyActiveFilters();
+  }
+}
+
+/**
+ * Apply filters that have proven effective (high positive scores)
+ */
+function applyActiveFilters() {
+  const { activeFilters } = userPreferences.filterExperiments;
+  
+  if (activeFilters.length > 0 && experimentalFilters.length === 0) {
+    applyExperimentalFilters(activeFilters);
+    console.log(`Applied ${activeFilters.length} active filter(s) based on effectiveness scores`);
   }
 }
 
